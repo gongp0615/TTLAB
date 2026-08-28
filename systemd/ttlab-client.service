@@ -1,0 +1,21 @@
+[Unit]
+Description=TTLAB Linux Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/ttlab/client/current/bin/ttlab-client
+Restart=always
+RestartSec=5
+User=ttlab
+Group=ttlab
+StateDirectory=ttlab-client
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ttlab-client
+
+[Install]
+WantedBy=multi-user.target

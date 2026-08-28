@@ -1,0 +1,17 @@
+[Unit]
+Description=TTLAB Client Updater
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/ttlab/updater/current/bin/ttlab-updater --serve
+Restart=always
+RestartSec=5
+Group=ttlab
+UMask=0007
+RuntimeDirectory=ttlab-updater
+RuntimeDirectoryMode=0770
+Environment=TTLAB_UPDATER_SOCKET=/run/ttlab-updater/update.sock
+
+[Install]
+WantedBy=multi-user.target

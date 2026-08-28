@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f5f5f7" />
     <link rel="icon" href="data:," />
-    <title>Nexus 智能运维工作台</title>
+    <title>TTLAB 设备运维工作台</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
@@ -18,7 +18,7 @@
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
             <div class="brand-name">NEXUS</div>
-            <div class="brand-subtitle">智能运维工作台</div>
+            <div class="brand-subtitle">Linux 串口设备平台</div>
           </div>
         </div>
 
@@ -59,55 +59,49 @@
         <div class="content-wrap">
           <section class="welcome-row">
             <div>
-              <h1>早上好，Alex <span class="wave">✦</span></h1>
-              <p class="welcome-copy">系统运行正常，今天没有需要立即处理的事项。</p>
+              <h1>设备运行总览 <span class="wave">✦</span></h1>
+              <p class="welcome-copy" id="runtimeSummary">正在连接 Server...</p>
             </div>
             <div class="welcome-actions">
-              <button class="button button-primary" id="deployButton"><i data-lucide="plus"></i><span>部署智能体</span></button>
+              <button class="button button-primary" id="deployButton"><i data-lucide="refresh-cw"></i><span>刷新状态</span></button>
             </div>
           </section>
 
           <section class="metric-grid" aria-label="关键指标">
-            <article class="metric-card metric-alert">
-              <div class="metric-heading"><span>活跃故障</span></div>
-              <div class="metric-value-row"><strong id="incidentMetric">03</strong></div>
-              <div class="metric-foot"><span class="trend-negative">1 个严重 · 2 个警告</span></div>
+            <article class="metric-card">
+              <div class="metric-heading"><span>在线 Client</span></div>
+              <div class="metric-value-row"><strong id="clientMetric">--</strong></div>
+              <div class="metric-foot"><span id="clientMetricFoot">等待数据</span></div>
             </article>
             <article class="metric-card">
-              <div class="metric-heading"><span>监控中的服务</span></div>
-              <div class="metric-value-row"><strong>24</strong></div>
-              <div class="metric-foot"><span class="trend-positive">覆盖 3 个环境</span></div>
+              <div class="metric-heading"><span>发现的串口设备</span></div>
+              <div class="metric-value-row"><strong id="deviceMetric">--</strong></div>
+              <div class="metric-foot"><span id="deviceMetricFoot">等待数据</span></div>
             </article>
             <article class="metric-card">
-              <div class="metric-heading"><span>智能体可用性</span></div>
-              <div class="metric-value-row"><strong>99.98<span class="unit">%</span></strong></div>
-              <div class="metric-foot"><span>近 30 天保持稳定</span></div>
+              <div class="metric-heading"><span>运行中的指令</span></div>
+              <div class="metric-value-row"><strong id="commandMetric">0</strong></div>
+              <div class="metric-foot"><span id="commandMetricFoot">当前 Server 会话</span></div>
             </article>
           </section>
 
           <section class="dashboard-grid">
             <article class="panel services-panel" id="services">
               <div class="panel-header">
-                <h2>服务健康度</h2>
-                <div class="panel-header-actions"><div class="select-wrap"><select id="environmentSelect" aria-label="选择环境"><option>生产环境</option><option>预发布环境</option><option>开发环境</option></select><i data-lucide="chevron-down"></i></div></div>
+                <h2>Client 连接状态</h2>
+                <div class="panel-header-actions"><div class="select-wrap"><select id="environmentSelect" aria-label="筛选 Client"><option value="all">全部 Client</option><option value="online">在线 Client</option><option value="offline">离线 Client</option><option value="syncing">恢复中 Client</option></select><i data-lucide="chevron-down"></i></div></div>
               </div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>服务</th><th>状态</th></tr></thead>
-                  <tbody id="serviceRows">
-                    <tr data-status="healthy"><td><div class="service-name"><div class="service-logo purple-logo">AP</div><div><strong>api-gateway</strong><span>核心服务 / 边缘节点</span></div></div></td><td><span class="status-tag healthy"><span></span>正常</span></td></tr>
-                    <tr data-status="healthy"><td><div class="service-name"><div class="service-logo orange-logo">DB</div><div><strong>orders-db</strong><span>数据服务 / 主库</span></div></div></td><td><span class="status-tag healthy"><span></span>正常</span></td></tr>
-                    <tr data-status="healthy"><td><div class="service-name"><div class="service-logo blue-logo">ID</div><div><strong>identity-service</strong><span>认证服务 / 核心</span></div></div></td><td><span class="status-tag healthy"><span></span>正常</span></td></tr>
-                  </tbody>
+                  <thead><tr><th>Client</th><th>状态</th></tr></thead>
+                  <tbody id="serviceRows"><tr><td colspan="2"><div class="empty-state">正在加载 Client 状态...</div></td></tr></tbody>
                 </table>
               </div>
             </article>
 
             <article class="panel incidents-panel" id="incidents">
-              <div class="panel-header"><h2>需要关注</h2><button class="plain-button" id="incidentFilterButton">全部故障 <i data-lucide="chevron-down"></i></button></div>
-              <div class="incident-list" id="incidentList">
-                <div class="incident-item critical"><div class="incident-top"><span class="severity-pill critical-pill">P1 · 严重</span><span class="incident-age">8 分钟前</span></div><h3>支付服务错误率升高</h3><p class="incident-summary">payments-worker　·　美东 1 区</p><div class="incident-progress"><div class="progress-avatar"><i data-lucide="sparkles"></i></div><div><strong>Orion 正在排查</strong><span>关联日志与近期部署</span></div><i data-lucide="loader-circle" class="spinning"></i></div></div>
-              </div>
+              <div class="panel-header"><h2>设备状态</h2><button class="plain-button" id="incidentFilterButton">全部设备 <i data-lucide="chevron-down"></i></button></div>
+              <div class="incident-list" id="incidentList"><div class="empty-state">正在加载设备状态...</div></div>
             </article>
           </section>
 
@@ -116,7 +110,7 @@
       </main>
     </div>
     <div class="toast" id="toast" role="status"><i data-lucide="check-circle-2"></i><span></span></div>
-    <div class="search-modal" id="searchModal" aria-hidden="true"><div class="search-backdrop"></div><div class="search-dialog"><div class="search-input-row"><i data-lucide="search"></i><input id="searchInput" placeholder="搜索服务、故障、自动化流程..." /><kbd>ESC</kbd></div><div class="search-suggestions"><span>试试搜索</span><button data-search="payments-worker">payments-worker</button><button data-search="严重故障">严重故障</button><button data-search="自动化流程">自动化流程</button></div></div></div>
+    <div class="search-modal" id="searchModal" aria-hidden="true"><div class="search-backdrop"></div><div class="search-dialog"><div class="search-input-row"><i data-lucide="search"></i><input id="searchInput" placeholder="搜索 Client、串口设备或状态..." /><kbd>ESC</kbd></div><div class="search-suggestions"><span>试试搜索</span><button data-search="client-001">client-001</button><button data-search="/dev/ttyUSB0">/dev/ttyUSB0</button><button data-search="离线设备">离线设备</button></div></div></div>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.js"></script>
     <script src="app.js"></script>
   </body>
