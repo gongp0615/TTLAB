@@ -194,3 +194,8 @@ node dist/apps/client/src/index.js
 ```
 
 生产部署必须使用 HTTPS/WSS、真实的每 Client 独立凭据、签名更新包和 systemd 服务文件；环境变量中的示例 Token 仅用于本地联调，不能用于生产。
+
+### 一键部署
+
+- Server：参见 [部署文档](docs/deployment.md#2-部署-server) 和 `scripts/deploy-server.sh`。
+- Client：参见 [部署文档](docs/deployment.md#3-部署-client) 和 `scripts/deploy-client.sh`。

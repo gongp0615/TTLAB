@@ -1,6 +1,6 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
@@ -12,7 +12,8 @@ interface LocalUpdateRequest extends UpdateRequest {
 
 const stateDirectory = process.env.TTLAB_STATE_DIR ?? '/var/lib/ttlab-client';
 const installRoot = process.env.TTLAB_INSTALL_ROOT ?? '/opt/ttlab/client';
-const publicKeyPem = process.env.TTLAB_UPDATE_PUBLIC_KEY;
+const publicKeyFile = process.env.TTLAB_UPDATE_PUBLIC_KEY_FILE;
+const publicKeyPem = process.env.TTLAB_UPDATE_PUBLIC_KEY ?? (publicKeyFile && existsSync(publicKeyFile) ? readFileSync(publicKeyFile, 'utf8') : undefined);
 const skipRestart = process.env.TTLAB_SKIP_RESTART === '1';
 const socketPath = process.env.TTLAB_UPDATER_SOCKET ?? '/run/ttlab-updater/update.sock';
 const statusPath = join(stateDirectory, 'update-status.json');

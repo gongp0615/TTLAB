@@ -5,6 +5,7 @@ After=local-fs.target
 [Service]
 Type=simple
 ExecStart=/opt/ttlab/updater/current/bin/ttlab-updater --serve
+EnvironmentFile=-/etc/ttlab/updater.env
 Restart=always
 RestartSec=5
 Group=ttlab
