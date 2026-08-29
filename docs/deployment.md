@@ -16,7 +16,12 @@
 source ~/.bashrc
 ```
 
-脚本会安装并设置 nvm、Node.js 22 和 npm 默认版本。不要使用 `sudo` 运行该初始化脚本。
+脚本按用户身份选择安装方式：
+
+- 普通用户：安装 nvm、Node.js 22 和 npm 默认版本到 `~/.nvm`。
+- root 用户：自动下载官方预编译二进制包，安装系统级 Node.js 22 到 `/usr/local`（适用于云服务器等 root 登录环境）。此模式安装后无需 `source ~/.bashrc`，因为 `/usr/local/bin` 已在 PATH 中。
+
+普通用户不要使用 `sudo` 运行该初始化脚本（nvm 是 per-user 工具）；root 用户直接运行即可。普通用户如需强制走系统级安装，可设置 `TTLAB_SYSTEM_NODE=1`（配合 `sudo` 使用）。
 
 也可以直接使用一键 Server 启动脚本：
 

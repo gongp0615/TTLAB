@@ -170,7 +170,12 @@ curl http://127.0.0.1/healthz
 source ~/.bashrc
 ```
 
-脚本安装 nvm、Node.js 22，并确保使用 Linux 版 `node` 和 `npm`，避免调用 Windows 的 `node.exe` 或 `npm.cmd`。
+脚本按用户身份选择安装方式：
+
+- 普通用户：安装 nvm、Node.js 22，并确保使用 Linux 版 `node` 和 `npm`，避免调用 Windows 的 `node.exe` 或 `npm.cmd`。
+- root 用户：自动安装系统级 Node.js 22 到 `/usr/local`（官方预编译二进制包），适用于云服务器等 root 登录环境，安装后无需 `source ~/.bashrc`。
+
+普通用户不要使用 `sudo` 运行该脚本；root 用户直接运行即可。
 
 ### 5.2 调试启动
 
