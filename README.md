@@ -171,7 +171,9 @@ docs              架构、协议、更新、测试和运维设计
 ### 本地运行
 
 ```bash
-npm install --offline
+./scripts/init-environment.sh
+source ~/.bashrc
+npm install
 npm test
 npm run build
 ```

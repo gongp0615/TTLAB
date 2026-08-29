@@ -9,6 +9,15 @@
 
 两个脚本都会执行 `npm ci` 和 `npm run build`，并且必须以 root 运行。
 
+新机器可以先在 Linux/WSL 中初始化 Node.js 环境：
+
+```bash
+./scripts/init-environment.sh
+source ~/.bashrc
+```
+
+脚本会安装并设置 nvm、Node.js 22 和 npm 默认版本。不要使用 `sudo` 运行该初始化脚本。
+
 ## 2. 部署 Server
 
 项目仓库根目录已经包含 Server 配置文件 `server.env`。clone 后直接编辑；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
