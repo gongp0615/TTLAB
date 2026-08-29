@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import https from 'node:https';
 import test from 'node:test';
 import WebSocket from 'ws';
-import { message, parseEnvelope, type ClientSnapshot } from '../packages/protocol/src/index.js';
+import { message, parseEnvelope, type ClientSnapshot, type DeviceLogChunk, type ManagedDevice } from '../packages/protocol/src/index.js';
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -57,22 +57,32 @@ test('Server and protocol Client complete sync, command result, disconnect, and 
     const syncPromise = waitForMessage(socket, (value) => value.type === 'sync.request');
     socket.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId: 'boot-e2e', platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, 'client-e2e')));
     await syncPromise;
-    const snapshot: ClientSnapshot = { snapshotRevision: 1, clientVersion: 'test', bootId: 'boot-e2e', health: 'healthy', devices: [{ deviceId: 'serial:e2e', path: '/dev/ttyE2E', stableIdentity: true, status: 'available', observedAt: new Date().toISOString() }] };
+    const serialPort = { deviceId: 'serial:e2e', path: '/dev/ttyE2E', stableIdentity: true, status: 'available' as const, portRole: 'control' as const, observedAt: new Date().toISOString() };
+    const managed: ManagedDevice = { deviceId: 'tvbox:e2e', deviceType: 'tv-stick-test-box', displayName: 'TV Stick Test Box', stableIdentity: 'tvbox-e2e', status: 'identified', ports: [serialPort], capabilities: ['serial-control', 'serial-log'], observedAt: serialPort.observedAt };
+    const snapshot: ClientSnapshot = { snapshotRevision: 1, clientVersion: 'test', bootId: 'boot-e2e', health: 'healthy', devices: [serialPort], managedDevices: [managed] };
     socket.send(JSON.stringify(message('client.snapshot', snapshot, 'client-e2e')));
     const devicesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/devices`);
     assert.equal(devicesResponse.status, 200);
-    assert.equal((await devicesResponse.json()).data[0].deviceId, 'serial:e2e');
+    assert.equal((await devicesResponse.json()).data[0].deviceId, 'tvbox:e2e');
 
     const executePromise = waitForMessage(socket, (value) => value.type === 'command.execute');
-    const commandResponse = await fetch(`http://127.0.0.1:${port}/api/v1/clients/client-e2e/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: 'serial:e2e', operation: 'system.ping', parameters: {} }) });
+    const commandResponse = await fetch(`http://127.0.0.1:${port}/api/v1/clients/client-e2e/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: 'tvbox:e2e', operation: 'system.ping', parameters: {} }) });
     assert.equal(commandResponse.status, 202);
     const commandId = (await commandResponse.json()).data.commandId as string;
     const execute = await executePromise;
     assert.equal((execute.payload as { commandId: string }).commandId, commandId);
-    socket.send(JSON.stringify(message('command.accepted', { commandId, deviceId: 'serial:e2e' }, 'client-e2e', execute.id)));
-    socket.send(JSON.stringify(message('command.result', { commandId, deviceId: 'serial:e2e', success: true, output: 'PONG' }, 'client-e2e', execute.id)));
+    socket.send(JSON.stringify(message('command.accepted', { commandId, deviceId: 'tvbox:e2e' }, 'client-e2e', execute.id)));
+    socket.send(JSON.stringify(message('command.result', { commandId, deviceId: 'tvbox:e2e', success: true, output: 'PONG' }, 'client-e2e', execute.id)));
     const commandStatus = await fetch(`http://127.0.0.1:${port}/api/v1/commands/${commandId}`);
     assert.equal((await commandStatus.json()).data.result.output, 'PONG');
+
+    const viewer = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`);
+    sockets.push(viewer);
+    await once(viewer, 'open');
+    const logPromise = waitForMessage(viewer, (value) => value.type === 'device.log.chunk');
+    socket.send(JSON.stringify(message('device.log.chunk', { deviceId: 'tvbox:e2e', portId: 'serial:e2e-log', sequence: 1, capturedAt: new Date().toISOString(), data: 'boot complete\\n', encoding: 'utf-8', truncated: false }, 'client-e2e')));
+    const log = await logPromise;
+    assert.equal((log.payload as DeviceLogChunk).data, 'boot complete\\n');
 
     socket.close();
     await new Promise((resolve) => setTimeout(resolve, 100));

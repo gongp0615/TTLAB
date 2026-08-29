@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { message, parseEnvelope } from '../packages/protocol/src/index.js';
+import { message, parseDeviceLogChunk, parseEnvelope } from '../packages/protocol/src/index.js';
 import { buildTvStickCommand, SerialOperationError, TvStickTestBoxAdapter } from '../apps/client/src/serial.js';
 
 test('creates and parses a versioned message envelope', () => {
@@ -14,6 +14,12 @@ test('creates and parses a versioned message envelope', () => {
 
 test('rejects malformed message envelopes', () => {
   assert.throws(() => parseEnvelope(JSON.stringify({ type: 'client.heartbeat' })), /invalid message envelope/);
+});
+
+test('validates bounded device log chunks', () => {
+  const chunk = parseDeviceLogChunk({ deviceId: 'tvbox:test', portId: 'log', sequence: 1, capturedAt: new Date().toISOString(), data: 'boot ok\n', encoding: 'utf-8', truncated: false });
+  assert.equal(chunk.sequence, 1);
+  assert.throws(() => parseDeviceLogChunk({ ...chunk, sequence: -1 }), /invalid device log chunk/);
 });
 
 test('maps supported TV Stick operations to fixed AT commands', () => {

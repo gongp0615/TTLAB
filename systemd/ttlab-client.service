@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=/opt/ttlab/client/current
 ExecStart=/opt/ttlab/client/current/bin/ttlab-client
 EnvironmentFile=-/etc/ttlab/client.env
 Restart=always

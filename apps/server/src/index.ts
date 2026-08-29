@@ -8,6 +8,7 @@ import {
   parseClientHello,
   parseClientSnapshot,
   parseCommandResult,
+  parseDeviceLogChunk,
   parseEnvelope,
   type ClientHello,
   type ClientSnapshot,
@@ -127,6 +128,18 @@ function broadcastState(client: RuntimeClient): void {
   }
 }
 
+function broadcastLog(payload: unknown, clientId: string): void {
+  const event = JSON.stringify(message('device.log.chunk', payload, clientId));
+  for (const viewer of webEventServer.clients) {
+    if (viewer.readyState === WebSocket.OPEN) viewer.send(event);
+  }
+}
+
+function managedDevices(client: RuntimeClient): Array<Record<string, unknown>> {
+  if (client.snapshot?.managedDevices) return client.snapshot.managedDevices.map((device) => ({ ...device, clientId: client.clientId }));
+  return client.snapshot?.devices.map((device) => ({ ...device, clientId: client.clientId })) ?? [];
+}
+
 const httpServer = tlsEnabled
   ? createHttpsServer({ key: readFileSync(tlsKeyFile as string), cert: readFileSync(tlsCertFile as string) }, requestHandler)
   : createHttpServer(requestHandler);
@@ -154,7 +167,7 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
       return;
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/devices') {
-      const devices = [...clients.values()].flatMap((client) => client.snapshot?.devices.map((device) => ({ ...device, clientId: client.clientId })) ?? []);
+      const devices = [...clients.values()].flatMap((client) => managedDevices(client));
       json(response, 200, { data: devices });
       return;
     }
@@ -195,7 +208,7 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
         json(response, 400, { error: { code: 'INVALID_ARGUMENT', message: 'command parameters must be short strings', retryable: false } });
         return;
       }
-      if (!client.snapshot?.devices.some((device) => device.deviceId === body.deviceId)) {
+      if (!client.snapshot?.devices.some((device) => device.deviceId === body.deviceId) && !client.snapshot?.managedDevices?.some((device) => device.deviceId === body.deviceId)) {
         json(response, 409, { error: { code: 'DEVICE_OFFLINE', message: 'device is not in the client snapshot', retryable: true } });
         return;
       }
@@ -312,6 +325,8 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
           if (envelope.type === 'command.result' || envelope.type === 'command.failed') command.result = parseCommandResult(envelope.payload);
         }
         if (runtime.snapshot) broadcastState(runtime);
+      } else if (envelope.type === 'device.log.chunk') {
+        broadcastLog(parseDeviceLogChunk(envelope.payload), boundClientId);
       }
     } catch (error) {
       socket.send(JSON.stringify(message('command.failed', { commandId: '', error: { code: 'PROTOCOL_ERROR', message: error instanceof Error ? error.message : 'invalid message', retryable: false } })));

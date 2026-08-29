@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let runtime = { clients: [], devices: [] };
   let clientFilter = 'all';
   const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
-  const statusLabel = { online: '在线', syncing: '恢复中', offline: '离线', available: '可用', busy: '使用中', error: '异常', removed: '已移除' };
+  const statusLabel = { online: '在线', syncing: '恢复中', offline: '离线', available: '可用', busy: '使用中', error: '异常', removed: '已移除', identified: '已识别', matched: '已匹配', partial: '部分连接', ambiguous: '待确认' };
 
   const render = () => {
     const clients = runtime.clients.filter((client) => clientFilter === 'all' || client.status === clientFilter);
@@ -36,8 +36,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('') : '<tr><td colspan="2"><div class="empty-state">没有符合条件的 Client</div></td></tr>';
 
     const deviceList = document.querySelector('#incidentList');
-    deviceList.innerHTML = devices.length ? devices.map((device) => `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'available' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.path)} · ${escapeHtml(device.deviceType ?? 'generic-serial')}</p><div class="incident-progress"><div class="progress-avatar"><i data-lucide="usb"></i></div><div><strong>${device.status === 'available' ? '设备可操作' : '设备需要处理'}</strong><span>最后发现时间 ${escapeHtml(device.observedAt)}</span></div></div></div>`).join('') : '<div class="empty-state">没有发现串口设备</div>';
+    deviceList.innerHTML = devices.length ? devices.map((device) => {
+      const ports = device.ports ?? [device];
+      const canControl = device.deviceType === 'tv-stick-test-box' && device.status === 'identified';
+      const actions = canControl ? `<div class="device-actions"><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="system.ping">检查</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.status">HDMI 状态</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.switch" data-parameters='{"output":"TVA"}'>切换 TVA</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.switch" data-parameters='{"output":"TVB"}'>切换 TVB</button></div>` : '';
+      return `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'identified' || device.status === 'matched' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.displayName ?? device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.deviceType ?? 'generic-serial')} · ${escapeHtml(device.stableIdentity ?? device.deviceId)}</p><div class="port-list">${ports.map((port) => `<div class="port-row"><span>${escapeHtml(port.portRole ?? 'unknown')}</span><code>${escapeHtml(port.path)}</code><em>${statusLabel[port.status] ?? '未知'}</em></div>`).join('')}</div>${actions}</div>`;
+    }).join('') : '<div class="empty-state">没有发现串口设备</div>';
+    document.querySelectorAll('.device-command').forEach((button) => button.addEventListener('click', () => { void executeCommand(button); }));
     if (iconRoot) iconRoot.createIcons();
+  };
+
+  const executeCommand = async (button) => {
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/clients/${encodeURIComponent(button.dataset.clientId)}/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: button.dataset.deviceId, operation: button.dataset.operation, parameters: JSON.parse(button.dataset.parameters ?? '{}') }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? '操作失败');
+      showToast(`指令已下发：${body.data.commandId}`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '操作失败');
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  const appendLog = (chunk) => {
+    const output = document.querySelector('#logOutput');
+    if (!output) return;
+    output.textContent = `${output.textContent}${chunk.data}`.slice(-64 * 1024);
+    output.scrollTop = output.scrollHeight;
   };
 
   const loadRuntime = async () => {
@@ -80,7 +107,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const eventsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/events`;
   const events = new WebSocket(eventsUrl);
-  events.addEventListener('message', () => { void loadRuntime(); });
+  events.addEventListener('message', (event) => {
+    try {
+      const envelope = JSON.parse(event.data);
+      if (envelope.type === 'device.log.chunk') appendLog(envelope.payload);
+      else void loadRuntime();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '实时事件格式错误');
+    }
+  });
   events.addEventListener('close', () => showToast('实时连接已断开，正在使用轮询恢复'));
   void loadRuntime();
   setInterval(() => { if (events.readyState !== WebSocket.OPEN) void loadRuntime(); }, 10000);

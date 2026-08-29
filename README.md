@@ -196,3 +196,5 @@ Server 默认使用 HTTP/WS 并监听 `80`，不需要证书或私钥。TLS/WSS 
 
 - Server：参见 [部署文档](docs/deployment.md#2-部署-server) 和 `scripts/deploy-server.sh`。
 - Client：参见 [部署文档](docs/deployment.md#3-部署-client) 和 `scripts/deploy-client.sh`。
+- 项目总文档：参见 [docs/project-guide.md](docs/project-guide.md)。
+- Test Box 接入：参见 [docs/tv-stick-test-box.md](docs/tv-stick-test-box.md)。

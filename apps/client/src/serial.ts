@@ -22,6 +22,39 @@ export interface AtSession {
 
 export type AtSessionFactory = (path: string, timeoutMs: number) => Promise<AtSession>;
 
+export async function probeTvStickPort(path: string, timeoutMs = 3000, sessionFactory: AtSessionFactory | undefined = undefined, command = 'AT+PING?', responsePrefix = 'PING:'): Promise<boolean> {
+  const session = await (sessionFactory ?? ((serialPath, timeout) => SerialSession.open(serialPath, timeout)))(path, timeoutMs);
+  try {
+    await session.execute(command, responsePrefix);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await session.close();
+  }
+}
+
+export class SerialLogCollector {
+  private constructor(private readonly reader: ReadStream, private readonly onData: (data: string) => void, private readonly onError: (error: Error) => void) {}
+
+  static async open(path: string, onData: (data: string) => void, onError: (error: Error) => void, baudRate?: string): Promise<SerialLogCollector> {
+    await configureSerialPort(path, baudRate);
+    const reader = createReadStream(path, { encoding: 'utf8' });
+    const collector = new SerialLogCollector(reader, onData, onError);
+    reader.on('data', (chunk) => collector.onData(String(chunk)));
+    reader.on('error', (error) => collector.onError(error));
+    return collector;
+  }
+
+  async close(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      if (this.reader.destroyed) { resolve(); return; }
+      this.reader.once('close', resolve);
+      this.reader.destroy();
+    });
+  }
+}
+
 export function buildTvStickCommand(operation: string, parameters: Record<string, string>): { command: string; responsePrefix?: string } {
   switch (operation) {
     case 'hdmi.switch': {
@@ -84,7 +117,7 @@ class SerialSession implements AtSession {
   private constructor(private readonly writer: FileHandle, private readonly reader: ReadStream, private readonly timeoutMs: number) {}
 
   static async open(path: string, timeoutMs: number): Promise<SerialSession> {
-    await configureSerial(path);
+    await configureSerialPort(path);
     const writer = await open(path, 'r+');
     const reader = createReadStream(path, { encoding: 'utf8' });
     return new SerialSession(writer, reader, timeoutMs);
@@ -126,9 +159,9 @@ class SerialSession implements AtSession {
   }
 }
 
-async function configureSerial(path: string): Promise<void> {
+export async function configureSerialPort(path: string, baudRate = process.env.TTLAB_SERIAL_BAUD ?? '115200'): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('stty', ['-F', path, process.env.TTLAB_SERIAL_BAUD ?? '115200', 'cs8', '-cstopb', '-parenb', '-ixon', '-ixoff', 'raw', '-echo']);
+    const child = spawn('stty', ['-F', path, baudRate, 'cs8', '-cstopb', '-parenb', '-ixon', '-ixoff', 'raw', '-echo']);
     let error = '';
     child.stderr.on('data', (chunk) => { error += chunk.toString(); });
     child.once('error', reject);

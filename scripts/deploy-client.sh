@@ -13,6 +13,8 @@ CLIENT_ID="${TTLAB_CLIENT_ID:-}"
 CLIENT_TOKEN="${TTLAB_CLIENT_TOKEN:-}"
 CLIENT_AUTH_ENABLED="${TTLAB_CLIENT_AUTH_ENABLED:-0}"
 SERIAL_DEVICE_TYPE="${TTLAB_SERIAL_DEVICE_TYPE:-generic-serial}"
+TVBOX_CONTROL_PORT="${TTLAB_TVBOX_CONTROL_PORT:-}"
+TVBOX_LOG_PORT="${TTLAB_TVBOX_LOG_PORT:-}"
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
 
@@ -43,6 +45,12 @@ if [[ -n "$CLIENT_ID" ]]; then
   [[ "$CLIENT_ID" != *$'\n'* && "$CLIENT_ID" != *$'\r'* ]] || fail 'TTLAB_CLIENT_ID must not contain newlines'
   [[ "$CLIENT_ID" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'TTLAB_CLIENT_ID contains unsafe characters'
 fi
+for port_selector in "$TVBOX_CONTROL_PORT" "$TVBOX_LOG_PORT"; do
+  if [[ -n "$port_selector" ]]; then
+    [[ "$port_selector" != *$'\n'* && "$port_selector" != *$'\r'* ]] || fail 'TV Box port selectors must not contain newlines'
+    [[ "$port_selector" =~ ^[A-Za-z0-9._:/-]+$ ]] || fail 'TV Box port selectors contain unsafe characters'
+  fi
+done
 [[ "$SERIAL_DEVICE_TYPE" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'TTLAB_SERIAL_DEVICE_TYPE contains unsafe characters'
 [[ -f "$UPDATE_PUBLIC_KEY_FILE" ]] || fail "update public key file does not exist: $UPDATE_PUBLIC_KEY_FILE"
 
@@ -72,6 +80,7 @@ install -d -m 0755 "$CLIENT_STAGING/bin" "$UPDATER_STAGING/bin"
 cp -a "$SOURCE_ROOT/dist" "$CLIENT_STAGING/dist"
 cp -a "$SOURCE_ROOT/dist" "$UPDATER_STAGING/dist"
 cp -a "$SOURCE_ROOT/node_modules" "$CLIENT_STAGING/node_modules"
+cp -a "$SOURCE_ROOT/device-types" "$CLIENT_STAGING/device-types"
 cp -a "$SOURCE_ROOT/node_modules" "$UPDATER_STAGING/node_modules"
 cat > "$CLIENT_STAGING/bin/ttlab-client" <<EOF
 #!/usr/bin/env sh
@@ -114,7 +123,9 @@ printf '%s\n' \
   "TTLAB_CLIENT_AUTH_ENABLED=$CLIENT_AUTH_ENABLED" \
   "TTLAB_STATE_DIR=/var/lib/ttlab-client" \
   "TTLAB_UPDATER_SOCKET=/run/ttlab-updater/update.sock" \
-  "TTLAB_SERIAL_DEVICE_TYPE=$SERIAL_DEVICE_TYPE" > "$ENV_TMP"
+  "TTLAB_SERIAL_DEVICE_TYPE=$SERIAL_DEVICE_TYPE" \
+  "TTLAB_TVBOX_CONTROL_PORT=$TVBOX_CONTROL_PORT" \
+  "TTLAB_TVBOX_LOG_PORT=$TVBOX_LOG_PORT" > "$ENV_TMP"
 install -o root -g root -m 0600 "$ENV_TMP" "$CLIENT_ENV_FILE"
 rm -f -- "$ENV_TMP"
 

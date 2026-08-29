@@ -13,7 +13,8 @@ export type MessageType =
   | 'client.update'
   | 'update.progress'
   | 'update.completed'
-  | 'update.failed';
+  | 'update.failed'
+  | 'device.log.chunk';
 
 export const protocolVersion = '1.0' as const;
 
@@ -52,6 +53,35 @@ export interface SerialDevice {
   status: 'available' | 'busy' | 'error' | 'removed';
   deviceType?: string;
   observedAt: string;
+  portRole?: 'control' | 'log' | 'dut-debug' | 'unknown' | 'log-candidate';
+  parentDeviceId?: string;
+  hardwareKey?: string;
+}
+
+export interface ManagedDevice {
+  deviceId: string;
+  deviceType: string;
+  displayName: string;
+  stableIdentity: string;
+  status: 'identified' | 'matched' | 'partial' | 'ambiguous' | 'offline' | 'error';
+  ports: SerialDevice[];
+  capabilities: string[];
+  observedAt: string;
+  identification?: {
+    method: 'hardware' | 'probe' | 'binding';
+    confidence: 'high' | 'medium' | 'low';
+    message?: string;
+  };
+}
+
+export interface DeviceLogChunk {
+  deviceId: string;
+  portId: string;
+  sequence: number;
+  capturedAt: string;
+  data: string;
+  encoding: 'utf-8' | 'base64';
+  truncated: boolean;
 }
 
 export interface ClientSnapshot {
@@ -60,6 +90,7 @@ export interface ClientSnapshot {
   bootId: string;
   health: 'healthy' | 'degraded';
   devices: SerialDevice[];
+  managedDevices?: ManagedDevice[];
   activeCommandId?: string;
   updateStatus?: {
     state: 'idle' | 'downloading' | 'verifying' | 'installing' | 'restarting' | 'healthy' | 'failed' | 'rolled_back';
@@ -123,7 +154,7 @@ export function parseEnvelope(raw: string): Envelope {
   }
   if (!value || typeof value !== 'object') throw new Error('message must be an object');
   const candidate = value as Record<string, unknown>;
-  const knownTypes: MessageType[] = ['client.hello', 'client.snapshot', 'client.heartbeat', 'sync.request', 'command.execute', 'command.accepted', 'command.progress', 'command.result', 'command.failed', 'client.update', 'update.progress', 'update.completed', 'update.failed'];
+  const knownTypes: MessageType[] = ['client.hello', 'client.snapshot', 'client.heartbeat', 'sync.request', 'command.execute', 'command.accepted', 'command.progress', 'command.result', 'command.failed', 'client.update', 'update.progress', 'update.completed', 'update.failed', 'device.log.chunk'];
   if (typeof candidate.id !== 'string' || candidate.version !== protocolVersion || typeof candidate.type !== 'string' || !knownTypes.includes(candidate.type as MessageType) || !Number.isFinite(Date.parse(String(candidate.timestamp))) || !('payload' in candidate)) {
     throw new ProtocolError('PROTOCOL_ERROR', 'invalid message envelope');
   }
@@ -164,4 +195,10 @@ export function parseCommandResult(payload: unknown): CommandResult {
   const value = object(payload, 'command result');
   if (typeof value.success !== 'boolean') throw new ProtocolError('INVALID_ARGUMENT', 'command result success is required');
   return value as unknown as CommandResult;
+}
+
+export function parseDeviceLogChunk(payload: unknown): DeviceLogChunk {
+  const value = object(payload, 'device log chunk');
+  if (!Number.isSafeInteger(value.sequence) || Number(value.sequence) < 0 || typeof value.data !== 'string' || (value.encoding !== 'utf-8' && value.encoding !== 'base64') || typeof value.truncated !== 'boolean') throw new ProtocolError('INVALID_ARGUMENT', 'invalid device log chunk');
+  return value as unknown as DeviceLogChunk;
 }

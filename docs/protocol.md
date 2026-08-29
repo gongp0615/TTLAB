@@ -61,6 +61,24 @@ Server 在每次连接建立后发送。Client 必须在同步超时时间内发
 
 包含 `bootId`、当前版本、`snapshotRevision` 和健康状态。Server 连续两个心跳周期未收到心跳后将连接标记为离线。
 
+### `device.log.chunk`
+
+Client 从已绑定的日志端口持续发送日志分片：
+
+```json
+{
+  "deviceId": "tvbox:...",
+  "portId": "serial:...if01-port0",
+  "sequence": 1024,
+  "capturedAt": "2026-08-29T10:00:00.000Z",
+  "data": "boot complete\\n",
+  "encoding": "utf-8",
+  "truncated": false
+}
+```
+
+单个分片最大 16 KiB，Server 通过 Web 实时事件通道转发；Client 端口拔出后停止发送并在下一次快照中报告端口状态。
+
 ## 4. 指令消息
 
 Server 向 Client 发送 `command.execute`：

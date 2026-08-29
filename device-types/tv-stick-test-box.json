@@ -1,0 +1,18 @@
+{
+  "type": "tv-stick-test-box",
+  "displayName": "TV Stick Test Box",
+  "match": [
+    { "vendorId": "28e9", "productId": "018a", "namePattern": "GigaDevice|GD32" },
+    { "vendorId": "10c4", "productId": "ea70", "namePattern": "Silicon_Labs|CP2105" }
+  ],
+  "probeMatch": [
+    { "vendorId": "28e9", "productId": "018a", "namePattern": "GigaDevice|GD32" }
+  ],
+  "probe": {
+    "command": "AT+PING?",
+    "responsePrefix": "PING:",
+    "timeoutMs": 3000
+  },
+  "baudRate": "115200",
+  "capabilities": ["serial-control", "serial-log", "hdmi", "usb-path", "system"]
+}
