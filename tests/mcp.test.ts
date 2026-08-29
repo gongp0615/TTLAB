@@ -56,32 +56,32 @@ test('tools/list exposes the TTLAB tool set', async () => {
   const server = await initializedServer();
   const result = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) as JsonRpcResponse;
   const names = (result.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name).sort();
-  assert.deepEqual(names, ['audit.query', 'client.list', 'client.update', 'command.execute', 'command.status', 'device.list', 'device.status', 'log.query']);
+  assert.deepEqual(names, ['audit_query', 'client_list', 'client_update', 'command_execute', 'command_status', 'device_list', 'device_status', 'log_query']);
 });
 
 test('tools/call rejects unknown tools and invalid arguments', async () => {
   const server = await initializedServer();
   const unknown = await server.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'bogus', arguments: {} } }) as JsonRpcErrorResponse;
   assert.equal(unknown.error.code, -32002);
-  const invalid = await server.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'device.status', arguments: {} } }) as JsonRpcErrorResponse;
+  const invalid = await server.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'device_status', arguments: {} } }) as JsonRpcErrorResponse;
   assert.equal(invalid.error.code, -32602);
-  const extra = await server.handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'client.list', arguments: { unexpected: 'x' } } }) as JsonRpcErrorResponse;
+  const extra = await server.handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'client_list', arguments: { unexpected: 'x' } } }) as JsonRpcErrorResponse;
   assert.equal(extra.error.code, -32602);
 });
 
 test('command.execute dispatches low-risk operations and blocks high-risk ones', async () => {
   const server = await initializedServer();
-  const lowRisk = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'command.execute', arguments: { deviceId: 'tvbox:1', operation: 'system.ping' } } }) as JsonRpcResponse;
+  const lowRisk = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'system.ping' } } }) as JsonRpcResponse;
   const lowPayload = lowRisk.result as { content: Array<{ text: string }>; isError: boolean };
   assert.equal(lowPayload.isError, false);
   assert.ok(lowPayload.content[0]?.text.includes('cmd-new'));
 
-  const highRisk = await server.handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'command.execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } } }) as JsonRpcResponse;
+  const highRisk = await server.handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } } }) as JsonRpcResponse;
   const highPayload = highRisk.result as { content: Array<{ text: string }>; isError: boolean };
   assert.equal(highPayload.isError, true);
   assert.ok(highPayload.content[0]?.text.includes('APPROVAL_REQUIRED'));
 
-  const update = await server.handle({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'client.update', arguments: { clientId: 'client-1', version: '1.1.0' } } }) as JsonRpcResponse;
+  const update = await server.handle({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'client_update', arguments: { clientId: 'client-1', version: '1.1.0' } } }) as JsonRpcResponse;
   const updatePayload = update.result as { content: Array<{ text: string }>; isError: boolean };
   assert.equal(updatePayload.isError, true);
   assert.ok(updatePayload.content[0]?.text.includes('APPROVAL_REQUIRED'));
@@ -89,12 +89,12 @@ test('command.execute dispatches low-risk operations and blocks high-risk ones',
 
 test('log.query and audit.query return query results', async () => {
   const server = await initializedServer();
-  const logs = await server.handle({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'log.query', arguments: { types: ['device'], clientId: 'client-1' } } }) as JsonRpcResponse;
+  const logs = await server.handle({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'log_query', arguments: { types: ['device'], clientId: 'client-1' } } }) as JsonRpcResponse;
   const logsPayload = logs.result as { content: Array<{ text: string }>; isError: boolean };
   assert.equal(logsPayload.isError, false);
   assert.ok(logsPayload.content[0]?.text.includes('tvbox'));
 
-  const audits = await server.handle({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'audit.query', arguments: {} } }) as JsonRpcResponse;
+  const audits = await server.handle({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'audit_query', arguments: {} } }) as JsonRpcResponse;
   const auditsPayload = audits.result as { content: Array<{ text: string }>; isError: boolean };
   assert.equal(auditsPayload.isError, false);
 });

@@ -59,8 +59,8 @@ function fakeContext(sink: FakeSink, approvals: ApprovalManager, overrides: Part
 
 test('approval manager resolves responses and auto-rejects on timeout', async () => {
   const approvals = new ApprovalManager(50, () => undefined);
-  const first = approvals.request('s1', 'command.execute', { operation: 'device.reboot' }, 'reboot');
-  const second = approvals.request('s1', 'client.update', { version: '1.1.0' }, 'update');
+  const first = approvals.request('s1', 'command_execute', { operation: 'device.reboot' }, 'reboot');
+  const second = approvals.request('s1', 'client_update', { version: '1.1.0' }, 'update');
   assert.equal(approvals.respond(first.approval.approvalId, 'approved'), true);
   assert.equal(await first.decision, 'approved');
   assert.equal(await second.decision, 'timeout');
@@ -68,7 +68,7 @@ test('approval manager resolves responses and auto-rejects on timeout', async ()
 
 test('approval manager rejects all pending approvals for a closed session', async () => {
   const approvals = new ApprovalManager(5_000, () => undefined);
-  const handle = approvals.request('s1', 'command.execute', {}, 'x');
+  const handle = approvals.request('s1', 'command_execute', {}, 'x');
   approvals.rejectSession('s1');
   assert.equal(await handle.decision, 'rejected');
 });
@@ -92,12 +92,12 @@ test('engine runs a tool call and then replies with text', async () => {
   });
   const engine = new ServerNativeEngine({
     llm: queuedLlm([
-      { toolCalls: [{ id: 'call-1', name: 'log.query', arguments: { types: ['device'], keyword: 'error' } }] },
+      { toolCalls: [{ id: 'call-1', name: 'log_query', arguments: { types: ['device'], keyword: 'error' } }] },
       { content: '未发现错误。' },
     ]),
   });
   await engine.runTurn(context, [], '查日志');
-  assert.ok(sink.messages.some((message) => message.type === 'agent.tool.status' && message.tool === 'log.query' && message.toolStatus === 'done'));
+  assert.ok(sink.messages.some((message) => message.type === 'agent.tool.status' && message.tool === 'log_query' && message.toolStatus === 'done'));
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.delta' && message.delta === '未发现错误。'));
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.done'));
 });
@@ -115,13 +115,13 @@ test('engine requests approval for high-risk commands and dispatches after appro
   });
   const engine = new ServerNativeEngine({
     llm: queuedLlm([
-      { toolCalls: [{ id: 'call-reboot', name: 'command.execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
+      { toolCalls: [{ id: 'call-reboot', name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
       { content: '重启已下发。' },
     ]),
   });
   const turn = engine.runTurn(context, [], '重启设备');
   const approval = await sink.waitFor((message) => message.type === 'agent.approval.request');
-  assert.equal(approval.tool, 'command.execute');
+  assert.equal(approval.tool, 'command_execute');
   approvals.respond(approval.approvalId as string, 'approved');
   await turn;
   assert.equal(dispatchedActor, 'agent:session-1');
@@ -137,7 +137,7 @@ test('engine reports rejection when the operator declines a high-risk command', 
   });
   const engine = new ServerNativeEngine({
     llm: queuedLlm([
-      { toolCalls: [{ id: 'call-x', name: 'command.execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
+      { toolCalls: [{ id: 'call-x', name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
       { content: '已取消。' },
     ]),
   });
@@ -159,7 +159,7 @@ test('engine times out pending approvals and adapts', async () => {
   });
   const engine = new ServerNativeEngine({
     llm: queuedLlm([
-      { toolCalls: [{ id: 'call-x', name: 'command.execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
+      { toolCalls: [{ id: 'call-x', name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
       { content: '审批超时，已取消。' },
     ]),
   });
@@ -173,7 +173,7 @@ test('engine stops when the tool call loop exceeds the iteration limit', async (
   const approvals = new ApprovalManager(5_000, () => undefined);
   const { context } = fakeContext(sink, approvals);
   const engine = new ServerNativeEngine({
-    llm: { chat: async () => ({ toolCalls: [{ id: 'c', name: 'device.list', arguments: {} }] }) },
+    llm: { chat: async () => ({ toolCalls: [{ id: 'c', name: 'device_list', arguments: {} }] }) },
     maxIterations: 3,
   });
   await engine.runTurn(context, [], '循环');

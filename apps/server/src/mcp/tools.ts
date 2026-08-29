@@ -62,23 +62,23 @@ function notFound(code: string, message: string): ToolResult {
 
 export const toolDefinitions: readonly ToolDefinition[] = [
   {
-    name: 'client.list',
+    name: 'client_list',
     description: 'List all TTLAB clients with their connection status, hello information, and latest device snapshot.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (context) => ({ text: JSON.stringify(context.listClients()) }),
   },
   {
-    name: 'device.list',
+    name: 'device_list',
     description: 'List all serial devices across clients with port roles, connection status, and the owning client id.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (context) => ({ text: JSON.stringify(context.listDevices()) }),
   },
   {
-    name: 'device.status',
+    name: 'device_status',
     description: 'Return the detailed status of a single device by its device id, including ports and owning client.',
     inputSchema: {
       type: 'object',
-      properties: { deviceId: { type: 'string', description: 'the device id as shown by device.list' } },
+      properties: { deviceId: { type: 'string', description: 'the device id as shown by device_list' } },
       required: ['deviceId'],
       additionalProperties: false,
     },
@@ -89,7 +89,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
   },
   {
-    name: 'log.query',
+    name: 'log_query',
     description: 'Query persisted TTLAB logs: device log stream, client events, command lifecycle, audit records, and agent sessions. Use this to inspect what happened on devices and why.',
     inputSchema: logQuerySchema,
     handler: async (context, args) => {
@@ -98,7 +98,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
   },
   {
-    name: 'audit.query',
+    name: 'audit_query',
     description: 'Query operator and agent audit records such as command dispatch and client update dispatch.',
     inputSchema: logQuerySchema,
     handler: async (context, args) => {
@@ -107,11 +107,11 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
   },
   {
-    name: 'command.status',
+    name: 'command_status',
     description: 'Return the status and result of a previously dispatched command by its command id.',
     inputSchema: {
       type: 'object',
-      properties: { commandId: { type: 'string', description: 'the command id returned by command.execute' } },
+      properties: { commandId: { type: 'string', description: 'the command id returned by command_execute' } },
       required: ['commandId'],
       additionalProperties: false,
     },
@@ -122,13 +122,13 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
   },
   {
-    name: 'command.execute',
+    name: 'command_execute',
     description: 'Dispatch a serial operation to a device on a TTLAB client. High-risk operations (system.reset, device.reboot) require user approval and are not available yet.',
     inputSchema: {
       type: 'object',
       properties: {
         clientId: { type: 'string', description: 'target client id; resolved from deviceId when omitted' },
-        deviceId: { type: 'string', description: 'target device id as shown by device.list' },
+        deviceId: { type: 'string', description: 'target device id as shown by device_list' },
         operation: { type: 'string', description: 'one of the enabled operations, e.g. system.ping, system.version, hdmi.status, hdmi.switch, usb.status, usb.path, hardware.rgb, hardware.lcd' },
         parameters: { type: 'object', additionalProperties: { type: 'string' }, description: 'operation parameters as short strings' },
       },
@@ -153,7 +153,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
   },
   {
-    name: 'client.update',
+    name: 'client_update',
     description: 'Trigger a software update on a TTLAB client. Requires user approval and is not available yet.',
     inputSchema: {
       type: 'object',

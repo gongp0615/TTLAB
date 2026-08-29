@@ -129,7 +129,7 @@ test('TTLAB MCP endpoint exposes device, log, audit, and command tools over HTTP
     // tools/list
     const tools = await mcpCall(port, { jsonrpc: '2.0', id: 3, method: 'tools/list' }, 'secret-token');
     const names = ((tools.body as { result: { tools: Array<{ name: string }> } }).result.tools.map((tool) => tool.name)).sort();
-    assert.deepEqual(names, ['audit.query', 'client.list', 'client.update', 'command.execute', 'command.status', 'device.list', 'device.status', 'log.query']);
+    assert.deepEqual(names, ['audit_query', 'client_list', 'client_update', 'command_execute', 'command_status', 'device_list', 'device_status', 'log_query']);
 
     // bring a client online so device commands and log streaming work
     const socket = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
@@ -143,21 +143,21 @@ test('TTLAB MCP endpoint exposes device, log, audit, and command tools over HTTP
     socket.send(JSON.stringify(message('client.snapshot', snapshot, 'client-mcp')));
 
     // client.list and device.list reflect the online client
-    const clients = await callTool(port, 'client.list', {});
+    const clients = await callTool(port, 'client_list', {});
     assert.ok(textOf(clients).includes('client-mcp'));
-    const devices = await callTool(port, 'device.list', {});
+    const devices = await callTool(port, 'device_list', {});
     assert.ok(textOf(devices).includes('tvbox:mcp'));
 
     // a persisted device log chunk is visible through log.query
     socket.send(JSON.stringify(message('device.log.chunk', { deviceId: 'tvbox:mcp', portId: 'serial:mcp-log', sequence: 11, capturedAt: new Date().toISOString(), data: 'hdmi error 0x2\\n', encoding: 'utf-8', truncated: false }, 'client-mcp')));
     await waitUntil(async () => {
-      const result = await callTool(port, 'log.query', { types: ['device'], keyword: 'hdmi error' });
+      const result = await callTool(port, 'log_query', { types: ['device'], keyword: 'hdmi error' });
       return textOf(result).includes('hdmi error 0x2');
     });
 
     // low-risk command executes through the MCP endpoint and completes
     const executePromise = waitForMessage(socket, (value) => value.type === 'command.execute');
-    const dispatch = await callTool(port, 'command.execute', { clientId: 'client-mcp', deviceId: 'tvbox:mcp', operation: 'system.ping', parameters: {} });
+    const dispatch = await callTool(port, 'command_execute', { clientId: 'client-mcp', deviceId: 'tvbox:mcp', operation: 'system.ping', parameters: {} });
     assert.equal(toolPayload(dispatch).isError, false);
     const commandId = (JSON.parse(textOf(dispatch)) as { commandId: string }).commandId;
     const execute = await executePromise;
@@ -165,21 +165,21 @@ test('TTLAB MCP endpoint exposes device, log, audit, and command tools over HTTP
     socket.send(JSON.stringify(message('command.accepted', { commandId, deviceId: 'tvbox:mcp' }, 'client-mcp', execute.id)));
     socket.send(JSON.stringify(message('command.result', { commandId, deviceId: 'tvbox:mcp', success: true, output: 'PONG' }, 'client-mcp', execute.id)));
     await waitUntil(async () => {
-      const status = await callTool(port, 'command.status', { commandId });
+      const status = await callTool(port, 'command_status', { commandId });
       return textOf(status).includes('"status":"result"');
     });
 
     // high-risk operations and updates require approval and are refused
-    const reboot = await callTool(port, 'command.execute', { deviceId: 'tvbox:mcp', operation: 'device.reboot' });
+    const reboot = await callTool(port, 'command_execute', { deviceId: 'tvbox:mcp', operation: 'device.reboot' });
     assert.equal(toolPayload(reboot).isError, true);
     assert.ok(textOf(reboot).includes('APPROVAL_REQUIRED'));
-    const update = await callTool(port, 'client.update', { clientId: 'client-mcp', version: '1.1.0' });
+    const update = await callTool(port, 'client_update', { clientId: 'client-mcp', version: '1.1.0' });
     assert.equal(toolPayload(update).isError, true);
     assert.ok(textOf(update).includes('APPROVAL_REQUIRED'));
 
     // audit records the agent-originated dispatch
     await waitUntil(async () => {
-      const audits = await callTool(port, 'audit.query', { keyword: 'command.dispatch' });
+      const audits = await callTool(port, 'audit_query', { keyword: 'command.dispatch' });
       return textOf(audits).includes('"actor":"agent"');
     });
   } finally {

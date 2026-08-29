@@ -21,14 +21,14 @@ export interface ServerNativeEngineOptions {
 }
 
 export function isApprovalRequired(tool: string, args: Record<string, unknown>): boolean {
-  if (tool === 'client.update') return true;
-  if (tool === 'command.execute' && typeof args.operation === 'string' && highRiskOperations.has(args.operation)) return true;
+  if (tool === 'client_update') return true;
+  if (tool === 'command_execute' && typeof args.operation === 'string' && highRiskOperations.has(args.operation)) return true;
   return false;
 }
 
 export function approvalReason(tool: string, args: Record<string, unknown>): string {
-  if (tool === 'command.execute') return `执行设备操作 ${String(args.operation)}（设备 ${String(args.deviceId)}）`;
-  if (tool === 'client.update') return `升级 Client ${String(args.clientId)} 到版本 ${String(args.version)}`;
+  if (tool === 'command_execute') return `执行设备操作 ${String(args.operation)}（设备 ${String(args.deviceId)}）`;
+  if (tool === 'client_update') return `升级 Client ${String(args.clientId)} 到版本 ${String(args.version)}`;
   return `调用工具 ${tool}`;
 }
 
@@ -96,13 +96,13 @@ export class ServerNativeEngine {
       }
     }
 
-    if (call.name === 'command.execute') {
+    if (call.name === 'command_execute') {
       const args = call.arguments as { clientId?: string; deviceId: string; operation: string; parameters: Record<string, string> };
       const result = context.mcpContext.dispatchCommand({ ...(args.clientId !== undefined ? { clientId: args.clientId } : {}), deviceId: args.deviceId, operation: args.operation, parameters: args.parameters ?? {}, actor: `agent:${context.sessionId}` });
       if (!result.ok) return { text: JSON.stringify(result.error), isError: true };
       return { text: JSON.stringify({ commandId: result.commandId, status: 'dispatched' }) };
     }
-    if (call.name === 'client.update') {
+    if (call.name === 'client_update') {
       const args = call.arguments as { clientId: string; version: string };
       const result = context.mcpContext.dispatchUpdate({ clientId: args.clientId, version: args.version, actor: `agent:${context.sessionId}` });
       if (!result.ok) return { text: JSON.stringify(result.error), isError: true };

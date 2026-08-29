@@ -59,14 +59,14 @@ Linux Client ... (仅经 Server 通信，协议不变)
 
 | 工具 | 能力 | 风险 |
 | --- | --- | --- |
-| `client.list` | Client 状态 | 只读 |
-| `device.list` | 设备与端口 | 只读 |
-| `device.status` | 设备详情 | 只读 |
-| `log.query` | 日志/事件/指令/审计检索 | 只读 |
-| `audit.query` | 审计查询 | 只读 |
-| `command.status` | 指令状态 | 只读 |
-| `command.execute` | 下发指令 | 写（`reboot`/`reset` 需审批，审批流接入前直接拒绝） |
-| `client.update` | 触发升级 | 写（审批流接入前直接拒绝） |
+| `client_list` | Client 状态 | 只读 |
+| `device_list` | 设备与端口 | 只读 |
+| `device_status` | 设备详情 | 只读 |
+| `log_query` | 日志/事件/指令/审计检索 | 只读 |
+| `audit_query` | 审计查询 | 只读 |
+| `command_status` | 指令状态 | 只读 |
+| `command_execute` | 下发指令 | 写（`reboot`/`reset` 需审批，审批流接入前直接拒绝） |
+| `client_update` | 触发升级 | 写（审批流接入前直接拒绝） |
 
 只读工具直接放行；写工具按风险执行或返回 `APPROVAL_REQUIRED`。聊天面板内的 Agent 会话（网关）对高风险写操作走审批流；通过 MCP 端点直接调用的高风险操作仍返回 `APPROVAL_REQUIRED`（由 dsh 侧权限系统承担确认，待现场验证后放开）。
 
@@ -182,7 +182,7 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 {
   "type": "agent.approval.request",
   "approvalId": "apr_01J...",
-  "tool": "command.execute",
+  "tool": "command_execute",
   "clientId": "client-001",
   "deviceId": "tvbox:...",
   "operation": "device.reboot",
@@ -196,8 +196,8 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 
 工具清单与端点行为见 3.2。实现说明：
 
-- `log.query`、`audit.query` 直接调用 logstore 查询模块，入参校验规则与 REST API 一致。
-- `command.execute` 与 REST 指令下发共用同一 `dispatchCommand` 实现（设备/操作/参数校验、指令创建、审计、下发）。
+- `log_query`、`audit_query` 直接调用 logstore 查询模块，入参校验规则与 REST API 一致。
+- `command_execute` 与 REST 指令下发共用同一 `dispatchCommand` 实现（设备/操作/参数校验、指令创建、审计、下发）。
 - 写工具当前对高风险操作返回 `APPROVAL_REQUIRED`，阶段 C 接入审批流后放开。
 
 ### 5.4 dsh 接入方式
@@ -231,7 +231,7 @@ curl -X POST http://127.0.0.1/mcp/v1 \
 curl -X POST http://127.0.0.1/mcp/v1 \
   -H 'content-type: application/json' \
   -H 'authorization: Bearer <TTLAB_AGENT_TOKEN>' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"log.query","arguments":{"types":["device"],"keyword":"error"}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"log_query","arguments":{"types":["device"],"keyword":"error"}}}'
 ```
 
 若 dsh 仅支持 stdio 形式接入 MCP 服务器，需增加一个 stdio 桥接进程（转发到 `/mcp/v1`），属于后续增强。
@@ -298,10 +298,10 @@ curl -X POST http://127.0.0.1/mcp/v1 \
 ### 7.1 排障会话
 
 1. 用户："TVB-02 日志为什么报错？"
-2. Agent 调用 `device.list` 确认设备。
-3. Agent 调用 `log.query` 检索最近日志与事件。
+2. Agent 调用 `device_list` 确认设备。
+3. Agent 调用 `log_query` 检索最近日志与事件。
 4. Agent 分析定位，给出建议。
-5. 如需执行修复：Agent 调用 `command.execute` → 网关发起审批 → 用户确认 → 执行 → 结果回传。
+5. 如需执行修复：Agent 调用 `command_execute` → 网关发起审批 → 用户确认 → 执行 → 结果回传。
 
 ### 7.2 异常处理
 

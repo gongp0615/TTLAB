@@ -76,9 +76,9 @@ function startFakeLlm(): Promise<{ port: number; close: () => Promise<void> }> {
         } else {
           const userContent = [...messages].reverse().find((item) => item.role === 'user')?.content ?? '';
           if (userContent.includes('重启')) {
-            choice = { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_reboot', type: 'function', function: { name: 'command.execute', arguments: JSON.stringify({ deviceId: 'tvbox:mcp', operation: 'device.reboot' }) } }] } };
+            choice = { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_reboot', type: 'function', function: { name: 'command_execute', arguments: JSON.stringify({ deviceId: 'tvbox:mcp', operation: 'device.reboot' }) } }] } };
           } else {
-            choice = { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_log', type: 'function', function: { name: 'log.query', arguments: JSON.stringify({ types: ['device'], keyword: 'error' }) } }] } };
+            choice = { message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_log', type: 'function', function: { name: 'log_query', arguments: JSON.stringify({ types: ['device'], keyword: 'error' }) } }] } };
           }
         }
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -142,9 +142,9 @@ test('Agent gateway runs a full chat turn with tool calls, approvals, and audit'
 
     // turn 1: log.query tool call then a text reply
     agentSocket.send(JSON.stringify({ type: 'agent.message.submit', sessionId, content: '为什么 TVB-02 日志报错？' }));
-    const logRunning = await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.tool.status' && message.tool === 'log.query' && message.toolStatus === 'running');
+    const logRunning = await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.tool.status' && message.tool === 'log_query' && message.toolStatus === 'running');
     assert.ok(logRunning);
-    await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.tool.status' && message.tool === 'log.query' && message.toolStatus === 'done');
+    await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.tool.status' && message.tool === 'log_query' && message.toolStatus === 'done');
     const delta = await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.message.delta');
     assert.equal(typeof delta.delta, 'string');
     await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.message.done');
@@ -153,7 +153,7 @@ test('Agent gateway runs a full chat turn with tool calls, approvals, and audit'
     const rebootExecutePromise = waitForMessage(clientSocket, (value) => value.type === 'command.execute');
     agentSocket.send(JSON.stringify({ type: 'agent.message.submit', sessionId, content: '帮我重启设备' }));
     const approval = await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.approval.request');
-    assert.equal(approval.tool, 'command.execute');
+    assert.equal(approval.tool, 'command_execute');
     assert.equal((approval.args as { operation?: string }).operation, 'device.reboot');
     agentSocket.send(JSON.stringify({ type: 'agent.approval.response', sessionId, approvalId: approval.approvalId, decision: 'approved' }));
     const execute = await rebootExecutePromise;
