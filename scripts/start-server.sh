@@ -10,8 +10,12 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[ttlab-start] %s\n' "$*"; }
 
 [[ "$(uname -s)" == Linux ]] || fail 'run this script inside Linux or WSL'
-[[ "$(id -u)" -ne 0 ]] || fail 'run this script as a normal user; the script uses sudo only for Server startup'
-command -v sudo >/dev/null 2>&1 || fail 'sudo is required to bind Server to port 80'
+if [[ "$(id -u)" -eq 0 ]]; then
+  IS_ROOT=1
+else
+  IS_ROOT=0
+  command -v sudo >/dev/null 2>&1 || fail 'sudo is required to bind Server to port 80'
+fi
 if [[ ! -f "$PROJECT_ROOT/server.env" ]]; then
   if [[ -f "$PROJECT_ROOT/server.env.example" ]]; then
     cp "$PROJECT_ROOT/server.env.example" "$PROJECT_ROOT/server.env"
@@ -24,12 +28,15 @@ fi
 cd "$PROJECT_ROOT"
 
 # This installs nvm/Node for the current user when the machine is not initialized yet.
+# As root it installs Node.js system-wide instead, so the nvm steps are skipped.
 bash "$SCRIPT_DIR/init-environment.sh"
-export NVM_DIR
-# shellcheck disable=SC1090
-source "$NVM_DIR/nvm.sh"
-nvm use "$NODE_VERSION" >/dev/null
-hash -r
+if [[ "$IS_ROOT" -eq 0 ]]; then
+  export NVM_DIR
+  # shellcheck disable=SC1090
+  source "$NVM_DIR/nvm.sh"
+  nvm use "$NODE_VERSION" >/dev/null
+  hash -r
+fi
 
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"
@@ -41,4 +48,8 @@ log 'installing Linux dependencies from package-lock.json'
 log 'building Server'
 "$NPM_BIN" run build
 log 'starting Server from server.env on port configured by the repository'
-exec sudo "$NODE_BIN" "$PROJECT_ROOT/dist/apps/server/src/index.js"
+if [[ "$IS_ROOT" -eq 0 ]]; then
+  exec sudo "$NODE_BIN" "$PROJECT_ROOT/dist/apps/server/src/index.js"
+else
+  exec "$NODE_BIN" "$PROJECT_ROOT/dist/apps/server/src/index.js"
+fi

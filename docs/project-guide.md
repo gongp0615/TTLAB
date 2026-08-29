@@ -122,13 +122,13 @@ TTLAB_PUBLIC_BASE_URL=http://Server的IP或域名
 脚本会：
 
 1. 检查 Linux/WSL 环境。
-2. 初始化或加载 nvm。
+2. 初始化或加载 Node.js 环境（普通用户使用 nvm，root 用户使用系统级 Node）。
 3. 使用 Node.js 22。
 4. 使用 `npm ci` 安装当前平台依赖。
 5. 编译 TypeScript。
-6. 使用 nvm 的 Node 绝对路径通过 `sudo` 启动 Server。
+6. 启动 Server（普通用户通过 `sudo`，root 用户直接运行）。
 
-Server 前台运行，按 `Ctrl+C` 停止。由于默认监听 `80` 端口，启动阶段需要 root；Client 不需要 root。
+Server 前台运行，按 `Ctrl+C` 停止。默认监听 `9000` 端口；普通用户通过 `sudo` 获得监听权限，root 用户直接启动。
 
 ### 4.3 systemd 部署
 

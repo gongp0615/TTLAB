@@ -10,7 +10,11 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 log() { printf '[ttlab-client-start] %s\n' "$*"; }
 
 [[ "$(uname -s)" == Linux ]] || fail 'run this script inside Linux or WSL'
-[[ "$(id -u)" -ne 0 ]] || fail 'run this script as a normal user; the debug Client does not need sudo'
+if [[ "$(id -u)" -eq 0 ]]; then
+  IS_ROOT=1
+else
+  IS_ROOT=0
+fi
 if [[ ! -f "$PROJECT_ROOT/server.env" ]]; then
   if [[ -f "$PROJECT_ROOT/server.env.example" ]]; then
     cp "$PROJECT_ROOT/server.env.example" "$PROJECT_ROOT/server.env"
@@ -22,11 +26,13 @@ fi
 
 cd "$PROJECT_ROOT"
 bash "$SCRIPT_DIR/init-environment.sh"
-export NVM_DIR
-# shellcheck disable=SC1090
-source "$NVM_DIR/nvm.sh"
-nvm use "$NODE_VERSION" >/dev/null
-hash -r
+if [[ "$IS_ROOT" -eq 0 ]]; then
+  export NVM_DIR
+  # shellcheck disable=SC1090
+  source "$NVM_DIR/nvm.sh"
+  nvm use "$NODE_VERSION" >/dev/null
+  hash -r
+fi
 
 NODE_BIN="$(command -v node)"
 NPM_BIN="$(command -v npm)"

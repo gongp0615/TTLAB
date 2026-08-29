@@ -29,7 +29,7 @@ source ~/.bashrc
 ./scripts/start-server.sh
 ```
 
-该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建，并使用正确的 Node.js 绝对路径通过 `sudo` 启动 Server。Server 配置从仓库根目录的 `server.env` 读取。
+该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建并启动 Server。普通用户启动时通过 `sudo` 提升权限；root 用户直接运行即可（自动使用系统级 Node，不再走 nvm/sudo）。Server 配置从仓库根目录的 `server.env` 读取。
 
 本地调试 Client 使用：
 
