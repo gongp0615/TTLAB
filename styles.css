@@ -70,8 +70,8 @@ svg { stroke-width: 1.8; }
 .device-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }.device-command { padding: 5px 8px; border: 1px solid #e2e2e7; border-radius: 4px; color: #697588; background: #fafbfc; font-size: 9px; }.device-command:hover { border-color: var(--blue); color: var(--blue); }.device-command:disabled { cursor: wait; opacity: .55; }.log-console { border-top: 1px solid var(--line); }.log-console-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 21px 8px; color: #696970; font-size: 10px; }.log-console-header span { color: #a0a0a5; font-size: 9px; }.log-console pre { height: 150px; overflow: auto; margin: 0; padding: 0 21px 16px; color: #657184; background: #fbfbfd; font-family: 'DM Mono', monospace; font-size: 9px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 
 /* ---- Agent chat panel ---- */
-.agent-panel { display: flex; flex-shrink: 0; width: 0; max-width: 92vw; flex-direction: column; overflow: hidden; border-right: 1px solid var(--line); background: var(--surface); transition: width .28s ease; }
-.agent-panel.open { width: 380px; box-shadow: 8px 0 28px rgba(0, 0, 0, .08); }
+.agent-panel { display: flex; flex-shrink: 0; width: 0; max-width: 92vw; flex-direction: column; overflow: hidden; background: var(--surface); transition: width .28s ease; }
+.agent-panel.open { width: 380px; border-right: 1px solid var(--line); box-shadow: 8px 0 28px rgba(0, 0, 0, .08); }
 .agent-panel > * { width: 380px; max-width: 92vw; }
 .agent-panel-header { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 0 18px; border-bottom: 1px solid var(--line-soft); }
 .agent-brand { display: flex; align-items: center; gap: 9px; }
