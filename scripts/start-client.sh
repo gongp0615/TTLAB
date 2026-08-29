@@ -11,7 +11,14 @@ log() { printf '[ttlab-client-start] %s\n' "$*"; }
 
 [[ "$(uname -s)" == Linux ]] || fail 'run this script inside Linux or WSL'
 [[ "$(id -u)" -ne 0 ]] || fail 'run this script as a normal user; the debug Client does not need sudo'
-[[ -f "$PROJECT_ROOT/server.env" ]] || fail "server.env does not exist: $PROJECT_ROOT/server.env"
+if [[ ! -f "$PROJECT_ROOT/server.env" ]]; then
+  if [[ -f "$PROJECT_ROOT/server.env.example" ]]; then
+    cp "$PROJECT_ROOT/server.env.example" "$PROJECT_ROOT/server.env"
+    log 'created server.env from server.env.example; edit it to set the port and host'
+  else
+    fail "server.env does not exist: $PROJECT_ROOT/server.env"
+  fi
+fi
 
 cd "$PROJECT_ROOT"
 bash "$SCRIPT_DIR/init-environment.sh"
@@ -31,10 +38,24 @@ log 'installing Linux dependencies from package-lock.json'
 log 'building current Client source'
 "$NPM_BIN" run build
 
-export TTLAB_SERVER_URL="${TTLAB_SERVER_URL:-ws://127.0.0.1/agent/v1/session}"
+export TTLAB_SERVER_URL="${TTLAB_SERVER_URL:-ws://127.0.0.1:9000/agent/v1/session}"
 export TTLAB_STATE_DIR="${TTLAB_STATE_DIR:-$HOME/.local/state/ttlab-client}"
 export TTLAB_CLIENT_AUTH_ENABLED="${TTLAB_CLIENT_AUTH_ENABLED:-0}"
 export TTLAB_SERIAL_DEVICE_TYPE="${TTLAB_SERIAL_DEVICE_TYPE:-generic-serial}"
+
+if [[ -f /proc/version ]] && grep -qi microsoft /proc/version; then
+  log 'WSL detected; checking USB serial devices for this environment'
+  bash "$SCRIPT_DIR/serial-attach.sh" status || true
+  if [[ "${TTLAB_WSL_SERIAL_AUTO_ATTACH:-1}" != 0 ]]; then
+    if bash "$SCRIPT_DIR/serial-attach.sh" attach; then
+      log 'USB serial devices attached'
+    else
+      log 'WARNING: USB serial attach did not complete; the Client will still start but may report no serial devices'
+      log 'attach manually from a Windows admin PowerShell: usbipd attach --wsl --busid=<BUSID>'
+      log 'or run: bash scripts/serial-attach.sh attach'
+    fi
+  fi
+fi
 
 log "connecting to $TTLAB_SERVER_URL"
 log "state directory: $TTLAB_STATE_DIR"

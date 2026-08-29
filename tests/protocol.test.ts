@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { message, parseDeviceLogChunk, parseEnvelope } from '../packages/protocol/src/index.js';
+import { message, parseClientHello, parseDeviceLogChunk, parseEnvelope, validateCommandParameters, type DeviceOperation } from '../packages/protocol/src/index.js';
 import { buildTvStickCommand, SerialOperationError, TvStickTestBoxAdapter } from '../apps/client/src/serial.js';
 
 test('creates and parses a versioned message envelope', () => {
@@ -14,6 +14,18 @@ test('creates and parses a versioned message envelope', () => {
 
 test('rejects malformed message envelopes', () => {
   assert.throws(() => parseEnvelope(JSON.stringify({ type: 'client.heartbeat' })), /invalid message envelope/);
+});
+
+test('parses client hello with hostname and addresses', () => {
+  const hello = parseClientHello({ clientVersion: '1.0.0', protocolVersion: '1.0', bootId: 'boot-test', platform: 'linux', architecture: 'arm64', capabilities: ['serial'], hostname: 'device-01', addresses: ['192.168.1.5', 'fe80::1'] });
+  assert.equal(hello.hostname, 'device-01');
+  assert.deepEqual(hello.addresses, ['192.168.1.5', 'fe80::1']);
+});
+
+test('parses client hello without optional hostname and addresses', () => {
+  const hello = parseClientHello({ clientVersion: '1.0.0', protocolVersion: '1.0', bootId: 'boot-test', platform: 'linux', architecture: 'arm64', capabilities: ['serial'] });
+  assert.equal(hello.hostname, undefined);
+  assert.equal(hello.addresses, undefined);
 });
 
 test('validates bounded device log chunks', () => {
@@ -31,6 +43,36 @@ test('maps supported TV Stick operations to fixed AT commands', () => {
 test('rejects unsafe TV Stick command parameters', () => {
   assert.throws(() => buildTvStickCommand('hdmi.switch', { output: 'RAW' }), (error: unknown) => error instanceof SerialOperationError && error.code === 'INVALID_ARGUMENT');
   assert.throws(() => buildTvStickCommand('unknown.operation', {}), (error: unknown) => error instanceof SerialOperationError && error.code === 'UNSUPPORTED_OPERATION');
+});
+
+test('builds TV Stick commands from the operation catalog with template substitution', () => {
+  assert.deepEqual(buildTvStickCommand('hdmi.switch', { output: 'ON' }), { command: 'AT+HDMI1=ON' });
+  assert.deepEqual(buildTvStickCommand('usb.path', { path: 'HST2DUT' }), { command: 'AT+USBPATH=HST2DUT' });
+  assert.deepEqual(buildTvStickCommand('hardware.rgb', { value: '255' }), { command: 'AT+RGB=255' });
+  assert.deepEqual(buildTvStickCommand('system.ping', {}), { command: 'AT+PING?', responsePrefix: 'PING:' });
+});
+
+test('validateCommandParameters rejects unknown operations', () => {
+  assert.equal(validateCommandParameters(undefined, {}), 'operation is not supported');
+});
+
+test('validateCommandParameters enforces enum parameter values', () => {
+  const operation: DeviceOperation = { operation: 'hdmi.switch', command: 'AT+HDMI1={output}', parameters: [{ name: 'output', type: 'enum', options: ['TVA', 'TVB', 'ON', 'OFF'], required: true }] };
+  assert.equal(validateCommandParameters(operation, { output: 'TVA' }), undefined);
+  assert.match(validateCommandParameters(operation, { output: 'RAW' }) ?? '', /must be one of TVA, TVB, ON, OFF/);
+  assert.match(validateCommandParameters(operation, {}) ?? '', /is required/);
+});
+
+test('validateCommandParameters enforces string pattern parameters', () => {
+  const operation: DeviceOperation = { operation: 'hardware.rgb', command: 'AT+RGB={value}', parameters: [{ name: 'value', type: 'string', pattern: '^\\d{3}$', required: true }] };
+  assert.equal(validateCommandParameters(operation, { value: '255' }), undefined);
+  assert.match(validateCommandParameters(operation, { value: '12' }) ?? '', /invalid format/);
+  assert.match(validateCommandParameters(operation, { value: '' }) ?? '', /is required/);
+});
+
+test('validateCommandParameters passes operations without parameters', () => {
+  const operation: DeviceOperation = { operation: 'system.ping', command: 'AT+PING?', parameters: [] };
+  assert.equal(validateCommandParameters(operation, {}), undefined);
 });
 
 test('executes an adapter operation through a fake serial session', async () => {

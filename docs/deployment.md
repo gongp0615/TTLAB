@@ -32,20 +32,47 @@ source ~/.bashrc
 ./scripts/start-client.sh
 ```
 
-该脚本运行仓库当前构建结果，不安装 systemd 服务、不复制到 `/opt`，日志直接输出到当前终端。默认连接 `ws://127.0.0.1/agent/v1/session`，状态保存到用户目录；可通过 `TTLAB_SERVER_URL`、`TTLAB_SERIAL_DEVICE_TYPE` 和 `TTLAB_STATE_DIR` 覆盖配置。
+该脚本运行仓库当前构建结果，不安装 systemd 服务、不复制到 `/opt`，日志直接输出到当前终端。默认连接 `ws://127.0.0.1:9000/agent/v1/session`，状态保存到用户目录；可通过 `TTLAB_SERVER_URL`、`TTLAB_SERIAL_DEVICE_TYPE` 和 `TTLAB_STATE_DIR` 覆盖配置。
+
+#### WSL 下 USB 串口自动挂载
+
+在 WSL 中调试时，Windows 主机上的 USB 串口设备必须先用 `usbipd-win` 挂载到 WSL，Client 才能在 `/dev` 下发现串口。`start-client.sh` 启动前会自动检查并挂载：
+
+```bash
+./scripts/serial-attach.sh status    # 查看设备分类、usbipd 状态和当前 /dev 串口
+./scripts/serial-attach.sh attach    # 挂载命中设备分类的共享串口（需要 Windows 提权）
+./scripts/serial-attach.sh check     # 有串口节点则 exit 0，否则 exit 1
+```
+
+`attach` 只处理命中 `device-types/*.json`（按 `match[].vendorId:productId` 匹配）且处于 `Shared` 状态的 USB 串口设备，非串口外设和未配置类型的串口不会被触碰。未共享的设备默认只提示手动执行 `usbipd bind --busid=<BUSID>`，设置 `TTLAB_WSL_SERIAL_AUTO_BIND=1` 后可自动 bind。
+
+默认行为受以下环境变量控制：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TTLAB_WSL_SERIAL_AUTO_ATTACH` | 1 | `start-client.sh` 是否自动 attach（设为 0 关闭） |
+| `TTLAB_DEVICE_TYPES_DIR` | `<仓库>/device-types` | 设备分类目录，attach 匹配依据 |
+| `TTLAB_WSL_SERIAL_BUSIDS` | 空（自动识别） | 显式 busid 白名单，设置后只处理指定设备 |
+| `TTLAB_WSL_SERIAL_ELEVATE` | 1 | 需要提权时弹 UAC；设为 0 直接调用 usbipd |
+| `TTLAB_WSL_SERIAL_AUTO_BIND` | 0 | 对未共享的匹配设备自动 `usbipd bind` |
+| `TTLAB_WSL_SERIAL_TIMEOUT_SECONDS` | 30 | Windows 调用超时（秒） |
+| `TTLAB_WSL_SERIAL_WAIT_SECONDS` | 10 | attach 后等待串口节点出现的时间（秒） |
+
+真实 Linux 设备（非 WSL）不需要上述步骤，串口设备直接出现在 `/dev` 下。
 
 ## 2. 部署 Server
 
-项目仓库根目录已经包含 Server 配置文件 `server.env`。clone 后直接编辑；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
+项目配置模板为仓库根目录的 `server.env.example`。clone 后复制为本机配置 `server.env`（已被 git 忽略，含密钥）；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
 
 ```bash
+cp server.env.example server.env
 sudoedit server.env
 ```
 
 至少确认以下配置：
 
 ```ini
-TTLAB_SERVER_PORT=80
+TTLAB_SERVER_PORT=9000
 TTLAB_PUBLIC_BASE_URL=http://ttlab.example.com
 TTLAB_CLIENT_AUTH_ENABLED=0
 ```
@@ -73,7 +100,7 @@ curl http://127.0.0.1/healthz
 journalctl -u ttlab-server -f
 ```
 
-Server 默认以 root 用户运行在 `80` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/opt/ttlab/server/current/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
+Server 默认以 root 用户运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/opt/ttlab/server/current/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
 
 ## 3. 部署 Client
 

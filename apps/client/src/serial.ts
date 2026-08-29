@@ -1,9 +1,11 @@
-import { createReadStream, type ReadStream } from 'node:fs';
+import { createReadStream, constants as fsConstants, type ReadStream } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import type { CommandRequest, CommandResult, SerialDevice } from '../../../packages/protocol/src/index.js';
+import { validateCommandParameters, type CommandRequest, type CommandResult, type SerialDevice } from '../../../packages/protocol/src/index.js';
+import { tvBoxProfile } from './discovery.js';
 
 const maxOutputLength = 16 * 1024;
+const serialPollIntervalMs = 20;
 
 export class SerialOperationError extends Error {
   constructor(public readonly code: string, message: string, public readonly retryable: boolean) {
@@ -47,52 +49,22 @@ export class SerialLogCollector {
   }
 
   async close(): Promise<void> {
+    if (this.reader.destroyed) return;
     await new Promise<void>((resolve) => {
-      if (this.reader.destroyed) { resolve(); return; }
-      this.reader.once('close', resolve);
+      const timeout = setTimeout(resolve, 1000);
+      this.reader.once('close', () => { clearTimeout(timeout); resolve(); });
       this.reader.destroy();
     });
   }
 }
 
 export function buildTvStickCommand(operation: string, parameters: Record<string, string>): { command: string; responsePrefix?: string } {
-  switch (operation) {
-    case 'hdmi.switch': {
-      const output = parameters.output;
-      if (!output || !['TVA', 'TVB', 'ON', 'OFF'].includes(output)) throw new SerialOperationError('INVALID_ARGUMENT', 'output must be TVA, TVB, ON or OFF', false);
-      return { command: `AT+HDMI1=${output}` };
-    }
-    case 'hdmi.status': return { command: 'AT+HDMI1?', responsePrefix: 'HDMI1:' };
-    case 'usb.path': {
-      const path = parameters.path;
-      if (!path || !['HST2DUT', 'HST2DSK', 'DUT2DSK', 'HST#DUT', 'ON', 'OFF'].includes(path)) throw new SerialOperationError('INVALID_ARGUMENT', 'unsupported USB path', false);
-      return { command: `AT+USBPATH=${path}` };
-    }
-    case 'usb.status': return { command: 'AT+USBPATH?', responsePrefix: 'USBPATH:' };
-    case 'system.ping': return { command: 'AT+PING?', responsePrefix: 'PING:' };
-    case 'system.version': return { command: 'AT+VER?', responsePrefix: 'VER:' };
-    case 'system.reset': {
-      const mode = parameters.mode;
-      if (!mode || !['REBOOT', 'DFU'].includes(mode)) throw new SerialOperationError('INVALID_ARGUMENT', 'mode must be REBOOT or DFU', false);
-      return { command: `AT+SYSRST=${mode}` };
-    }
-    case 'device.reboot': {
-      const mode = parameters.mode;
-      if (!mode || !['NRM', 'DWN'].includes(mode)) throw new SerialOperationError('INVALID_ARGUMENT', 'mode must be NRM or DWN', false);
-      return { command: `AT+REBOOT=${mode}` };
-    }
-    case 'hardware.rgb': {
-      const value = parameters.value;
-      if (!value || !/^\d{3}$/.test(value)) throw new SerialOperationError('INVALID_ARGUMENT', 'RGB value must contain three digits', false);
-      return { command: `AT+RGB=${value}` };
-    }
-    case 'hardware.lcd': {
-      const mode = parameters.mode;
-      if (!mode || !['LCDOFF', 'LCDLOGO'].includes(mode)) throw new SerialOperationError('INVALID_ARGUMENT', 'unsupported LCD mode', false);
-      return { command: `AT+SYSCMD=${mode}` };
-    }
-    default: throw new SerialOperationError('UNSUPPORTED_OPERATION', `unsupported TV Stick operation: ${operation}`, false);
-  }
+  const entry = tvBoxProfile?.operations?.find((item) => item.operation === operation);
+  if (!entry) throw new SerialOperationError('UNSUPPORTED_OPERATION', `unsupported TV Stick operation: ${operation}`, false);
+  const validationError = validateCommandParameters(entry, parameters);
+  if (validationError) throw new SerialOperationError('INVALID_ARGUMENT', validationError, false);
+  const command = entry.command.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, name: string) => parameters[name] ?? '');
+  return entry.responsePrefix ? { command, responsePrefix: entry.responsePrefix } : { command };
 }
 
 export class TvStickTestBoxAdapter implements SerialAdapter {
@@ -114,48 +86,75 @@ export class TvStickTestBoxAdapter implements SerialAdapter {
 }
 
 class SerialSession implements AtSession {
-  private constructor(private readonly writer: FileHandle, private readonly reader: ReadStream, private readonly timeoutMs: number) {}
+  private constructor(private readonly handle: FileHandle, private readonly timeoutMs: number) {}
 
   static async open(path: string, timeoutMs: number): Promise<SerialSession> {
     await configureSerialPort(path);
-    const writer = await open(path, 'r+');
-    const reader = createReadStream(path, { encoding: 'utf8' });
-    return new SerialSession(writer, reader, timeoutMs);
+    // The port must be opened non-blocking: a blocking read would make close()
+    // hang forever because a pending read on a character device cannot be
+    // interrupted, which left commands stuck in the "accepted" state.
+    const handle = await open(path, fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    return new SerialSession(handle, timeoutMs);
   }
 
   async execute(command: string, responsePrefix?: string): Promise<string> {
-    const reader = this.reader as ReadStream & { on(event: 'data', listener: (chunk: string) => void): void; removeListener(event: 'data', listener: (chunk: string) => void): void };
-    return new Promise<string>((resolve, reject) => {
-      let output = '';
-      let settled = false;
-      const finish = (error?: Error): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reader.removeListener('data', onData);
-        if (error) reject(error); else resolve(output.trim());
-      };
-      const onData = (chunk: string): void => {
-        output = `${output}${chunk}`.slice(-maxOutputLength);
+    const deadline = Date.now() + this.timeoutMs;
+    await this.writeCommand(command, deadline);
+    return this.readResponse(responsePrefix, deadline);
+  }
+
+  private async writeCommand(command: string, deadline: number): Promise<void> {
+    const payload = Buffer.from(`${command}\r\n`, 'utf8');
+    let offset = 0;
+    while (offset < payload.length) {
+      if (Date.now() >= deadline) {
+        throw new SerialOperationError('SERIAL_TIMEOUT', `serial response timed out after ${this.timeoutMs}ms`, true);
+      }
+      try {
+        const { bytesWritten } = await this.handle.write(payload, offset, payload.length - offset, null);
+        offset += bytesWritten;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EAGAIN') {
+          await new Promise((resolve) => setTimeout(resolve, serialPollIntervalMs));
+          continue;
+        }
+        throw new SerialOperationError('SERIAL_WRITE_FAILED', error instanceof Error ? error.message : 'serial write failed', true);
+      }
+    }
+  }
+
+  private async readResponse(responsePrefix: string | undefined, deadline: number): Promise<string> {
+    const buffer = Buffer.alloc(4096);
+    let output = '';
+    while (Date.now() < deadline) {
+      let bytesRead = 0;
+      try {
+        bytesRead = (await this.handle.read(buffer, 0, buffer.length, null)).bytesRead;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EAGAIN') {
+          await new Promise((resolve) => setTimeout(resolve, serialPollIntervalMs));
+          continue;
+        }
+        throw new SerialOperationError('SERIAL_READ_FAILED', error instanceof Error ? error.message : 'serial read failed', true);
+      }
+      if (bytesRead > 0) {
+        output = `${output}${buffer.subarray(0, bytesRead).toString('utf8')}`.slice(-maxOutputLength);
         const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
         if (lines.some((line) => line === 'ERROR' || line.startsWith('ERROR'))) {
-          finish(new SerialOperationError('DEVICE_ERROR', lines.find((line) => line.startsWith('ERROR')) ?? 'device returned ERROR', false));
-        } else if (lines.includes('OK') || (responsePrefix && lines.some((line) => line.startsWith(responsePrefix)))) {
-          finish();
+          throw new SerialOperationError('DEVICE_ERROR', lines.find((line) => line.startsWith('ERROR')) ?? 'device returned ERROR', false);
         }
-      };
-      const timer = setTimeout(() => finish(new SerialOperationError('SERIAL_TIMEOUT', `serial response timed out after ${this.timeoutMs}ms`, true)), this.timeoutMs);
-      reader.on('data', onData);
-      this.writer.write(`${command}\r\n`).catch((error) => finish(new SerialOperationError('SERIAL_WRITE_FAILED', error instanceof Error ? error.message : 'serial write failed', true)));
-    });
+        if (lines.includes('OK') || (responsePrefix && lines.some((line) => line.startsWith(responsePrefix)))) {
+          return output.trim();
+        }
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, serialPollIntervalMs));
+      }
+    }
+    throw new SerialOperationError('SERIAL_TIMEOUT', `serial response timed out after ${this.timeoutMs}ms`, true);
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.reader.once('close', resolve);
-      this.reader.destroy();
-    });
-    await this.writer.close();
+    await this.handle.close();
   }
 }
 

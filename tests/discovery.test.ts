@@ -24,3 +24,12 @@ test('keeps a matching Test Box ambiguous until its control port is confirmed', 
   assert.equal(device?.status, 'ambiguous');
   assert.equal(device?.ports.every((port) => port.portRole === 'log-candidate'), true);
 });
+
+test('attaches the device type operation catalog to the managed device', () => {
+  const [device] = buildManagedDevices(ports, { controlSelector: '/dev/ttyACM0' });
+  assert.ok(Array.isArray(device?.operations));
+  assert.ok((device?.operations?.length ?? 0) >= 10);
+  assert.ok(device?.operations?.some((operation) => operation.operation === 'system.ping'));
+  const hdmiSwitch = device?.operations?.find((operation) => operation.operation === 'hdmi.switch');
+  assert.deepEqual(hdmiSwitch?.parameters[0]?.options, ['TVA', 'TVB', 'ON', 'OFF']);
+});

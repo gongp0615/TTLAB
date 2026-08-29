@@ -25,6 +25,7 @@
 - Client 同一设备互斥、不同设备并发和锁释放。
 - Server 与协议 Client 的同步、指令结果、断线、重连和状态查询。
 - 实际 Client 进程的身份文件持久化、首次注册和重启重连。
+- Client 集成测试（`tests/client.integration.test.ts`）：通过 `ClientAgent` 注入 Fake Serial Adapter / Fake Discovery 连接真实 Server 进程，覆盖注册、快照同步与心跳保持在线、指令端到端成功/失败/串口忙/过期指令/设备离线、串口发现与热插拔、Server 重启后自动重连并重发完整快照、身份跨重启持久化；串口日志采集通过 python3 `pty` 创建虚拟串口验证 `device.log.chunk` 真实链路。
 - HTTPS/WSS 健康检查，以及 Client 认证关闭/开启两种握手模式。
 - Updater 的 Hash/签名前置校验、平台/架构/最低协议版本、自检失败和健康检查失败回滚。
 - Test Box 的硬件特征聚合、控制口/日志口绑定和日志事件边界校验。

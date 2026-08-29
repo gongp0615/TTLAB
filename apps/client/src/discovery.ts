@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import type { ManagedDevice, SerialDevice } from '../../../packages/protocol/src/index.js';
+import type { DeviceOperation, ManagedDevice, SerialDevice } from '../../../packages/protocol/src/index.js';
 
 export interface SerialPortInfo extends SerialDevice {
   interfaceNumber?: string;
@@ -21,6 +21,7 @@ interface DeviceTypeProfile {
   probe: { command: string; responsePrefix: string; timeoutMs: number };
   baudRate: string;
   capabilities: string[];
+  operations?: DeviceOperation[];
 }
 
 function readTvBoxProfile(): DeviceTypeProfile | undefined {
@@ -109,7 +110,7 @@ function selectorMatches(port: SerialPortInfo, selector: string | undefined): bo
 }
 
 function groupId(ports: SerialPortInfo[]): { deviceId: string; stableIdentity: string } {
-  const identity = ports.map((port) => port.hardwareKey ?? port.deviceId).sort().join('|');
+  const identity = [...new Set(ports.map((port) => port.hardwareKey ?? port.deviceId))].sort().join('|');
   return { deviceId: `tvbox:${identity}`, stableIdentity: identity };
 }
 
@@ -134,7 +135,7 @@ export function buildManagedDevices(ports: SerialPortInfo[], options: BuildManag
       deviceType: 'tv-stick-test-box',
     }));
     const hasControl = boundPorts.some((port) => port.portRole === 'control');
-    devices.push({ deviceId: identity.deviceId, deviceType: tvBoxProfile?.type ?? 'tv-stick-test-box', displayName: tvBoxProfile?.displayName ?? 'TV Stick Test Box', stableIdentity: identity.stableIdentity, status: hasControl ? 'identified' : selectedControl || selectedLog ? 'matched' : 'ambiguous', ports: boundPorts, capabilities: tvBoxProfile?.capabilities ?? ['serial-control', 'serial-log'], observedAt: new Date().toISOString(), identification: hasControl ? { method: selectedControl ? 'binding' : 'probe', confidence: 'high' } : { method: 'hardware', confidence: 'medium', message: 'control and log ports require binding or safe probe' } });
+    devices.push({ deviceId: identity.deviceId, deviceType: tvBoxProfile?.type ?? 'tv-stick-test-box', displayName: tvBoxProfile?.displayName ?? 'TV Stick Test Box', stableIdentity: identity.stableIdentity, status: hasControl ? 'identified' : selectedControl || selectedLog ? 'matched' : 'ambiguous', ports: boundPorts, capabilities: tvBoxProfile?.capabilities ?? ['serial-control', 'serial-log'], operations: tvBoxProfile?.operations ?? [], observedAt: new Date().toISOString(), identification: hasControl ? { method: selectedControl ? 'binding' : 'probe', confidence: 'high' } : { method: 'hardware', confidence: 'medium', message: 'control and log ports require binding or safe probe' } });
   }
   for (const port of ports.filter((candidate) => !tvPorts.includes(candidate))) {
     devices.push({ deviceId: port.deviceId, deviceType: 'generic-serial', displayName: port.deviceId, stableIdentity: port.hardwareKey ?? port.deviceId, status: 'matched', ports: [port], capabilities: ['serial'], observedAt: port.observedAt, identification: { method: 'hardware', confidence: 'low' } });

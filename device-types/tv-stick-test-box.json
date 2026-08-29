@@ -2,11 +2,23 @@
   "type": "tv-stick-test-box",
   "displayName": "TV Stick Test Box",
   "match": [
-    { "vendorId": "28e9", "productId": "018a", "namePattern": "GigaDevice|GD32" },
-    { "vendorId": "10c4", "productId": "ea70", "namePattern": "Silicon_Labs|CP2105" }
+    {
+      "vendorId": "28e9",
+      "productId": "018a",
+      "namePattern": "GigaDevice|GD32"
+    },
+    {
+      "vendorId": "10c4",
+      "productId": "ea70",
+      "namePattern": "Silicon_Labs|CP2105"
+    }
   ],
   "probeMatch": [
-    { "vendorId": "28e9", "productId": "018a", "namePattern": "GigaDevice|GD32" }
+    {
+      "vendorId": "28e9",
+      "productId": "018a",
+      "namePattern": "GigaDevice|GD32"
+    }
   ],
   "probe": {
     "command": "AT+PING?",
@@ -14,5 +26,167 @@
     "timeoutMs": 3000
   },
   "baudRate": "115200",
-  "capabilities": ["serial-control", "serial-log", "hdmi", "usb-path", "system"]
+  "capabilities": [
+    "serial-control",
+    "serial-log",
+    "hdmi",
+    "usb-path",
+    "system"
+  ],
+  "operations": [
+    {
+      "operation": "system.ping",
+      "displayName": "检查",
+      "description": "发送 AT+PING? 检查控制口连通性",
+      "risk": "low",
+      "command": "AT+PING?",
+      "responsePrefix": "PING:",
+      "parameters": []
+    },
+    {
+      "operation": "system.version",
+      "displayName": "版本",
+      "description": "查询测试盒固件版本",
+      "risk": "low",
+      "command": "AT+VER?",
+      "responsePrefix": "VER:",
+      "parameters": []
+    },
+    {
+      "operation": "hdmi.status",
+      "displayName": "HDMI 状态",
+      "description": "查询当前 HDMI 输出通道",
+      "risk": "low",
+      "command": "AT+HDMI1?",
+      "responsePrefix": "HDMI1:",
+      "parameters": []
+    },
+    {
+      "operation": "hdmi.switch",
+      "displayName": "切换 HDMI",
+      "description": "切换 HDMI 输出通道",
+      "risk": "low",
+      "command": "AT+HDMI1={output}",
+      "parameters": [
+        {
+          "name": "output",
+          "label": "输出",
+          "type": "enum",
+          "options": [
+            "TVA",
+            "TVB",
+            "ON",
+            "OFF"
+          ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "usb.status",
+      "displayName": "USB 通路状态",
+      "description": "查询当前 USB 通路",
+      "risk": "low",
+      "command": "AT+USBPATH?",
+      "responsePrefix": "USBPATH:",
+      "parameters": []
+    },
+    {
+      "operation": "usb.path",
+      "displayName": "USB 通路切换",
+      "description": "切换 USB 通路",
+      "risk": "low",
+      "command": "AT+USBPATH={path}",
+      "parameters": [
+        {
+          "name": "path",
+          "label": "通路",
+          "type": "enum",
+          "options": [
+            "HST2DUT",
+            "HST2DSK",
+            "DUT2DSK",
+            "HST#DUT",
+            "ON",
+            "OFF"
+          ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "hardware.rgb",
+      "displayName": "RGB 灯效",
+      "description": "设置 RGB 灯效，三位数字",
+      "risk": "low",
+      "command": "AT+RGB={value}",
+      "parameters": [
+        {
+          "name": "value",
+          "label": "RGB 值",
+          "type": "string",
+          "pattern": "^\\d{3}$",
+          "placeholder": "如 255",
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "hardware.lcd",
+      "displayName": "LCD 显示",
+      "description": "设置 LCD 显示模式",
+      "risk": "low",
+      "command": "AT+SYSCMD={mode}",
+      "parameters": [
+        {
+          "name": "mode",
+          "label": "模式",
+          "type": "enum",
+          "options": [
+            "LCDOFF",
+            "LCDLOGO"
+          ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "system.reset",
+      "displayName": "系统复位",
+      "description": "复位测试盒，DFU 模式会进入固件升级",
+      "risk": "high",
+      "command": "AT+SYSRST={mode}",
+      "parameters": [
+        {
+          "name": "mode",
+          "label": "复位模式",
+          "type": "enum",
+          "options": [
+            "REBOOT",
+            "DFU"
+          ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "device.reboot",
+      "displayName": "设备重启",
+      "description": "重启测试盒",
+      "risk": "high",
+      "command": "AT+REBOOT={mode}",
+      "parameters": [
+        {
+          "name": "mode",
+          "label": "重启模式",
+          "type": "enum",
+          "options": [
+            "NRM",
+            "DWN"
+          ],
+          "required": true
+        }
+      ]
+    }
+  ]
 }

@@ -17,15 +17,8 @@
         <div class="brand-row">
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
-            <div class="brand-name">NEXUS</div>
-            <div class="brand-subtitle">Linux 串口设备平台</div>
+            <div class="brand-name">TTLAB</div>
           </div>
-        </div>
-
-        <div class="workspace-switcher" id="workspaceSwitcher" role="button" tabindex="0" aria-expanded="false">
-          <div class="workspace-avatar">星云</div>
-          <div class="workspace-copy"><strong>星云科技</strong><span>生产环境工作区</span></div>
-          <i data-lucide="chevrons-up-down" class="icon icon-muted"></i>
         </div>
 
         <nav class="nav-group" aria-label="工作区">
@@ -46,6 +39,23 @@
       </aside>
 
       <main class="main-content">
+        <aside class="agent-panel" id="agentPanel" aria-hidden="true">
+          <div class="agent-panel-header">
+            <div class="agent-brand"><i data-lucide="bot"></i><strong>运维智能体</strong></div>
+            <div class="agent-header-actions">
+              <span class="agent-conn" id="agentConn"><i></i><em>离线</em></span>
+              <button class="agent-close" id="agentPanelClose" aria-label="关闭">✕</button>
+            </div>
+          </div>
+          <div class="agent-messages" id="agentMessages">
+            <div class="empty-state" id="agentEmpty">打开后即可对话。智能体会通过工具查询设备状态、检索日志并执行操作，高风险操作需要你确认。</div>
+          </div>
+          <div class="agent-composer">
+            <textarea id="agentInput" rows="1" placeholder="例如：为什么 TVB-02 日志报错？" aria-label="向智能体发送消息"></textarea>
+            <button class="button button-primary" id="agentSend" disabled>发送</button>
+          </div>
+        </aside>
+        <div class="main-content-body">
         <header class="topbar">
           <div class="breadcrumbs"><span>工作区</span><i data-lucide="chevron-right"></i><strong id="breadcrumbPage">概览</strong></div>
           <div class="topbar-actions">
@@ -106,11 +116,92 @@
             </article>
           </section>
 
-          <footer class="page-footer"><span>NEXUS 智能运维工作台 <span class="footer-separator">·</span> v1.8.4</span><span class="footer-links"><a href="#docs">使用文档</a><a href="#status">系统状态 <span class="tiny-green-dot"></span></a></span></footer>
+          <footer class="page-footer"><span>TTLAB 智能运维工作台 <span class="footer-separator">·</span> v1.8.4</span><span class="footer-links"><a href="#docs">使用文档</a><a href="#status">系统状态 <span class="tiny-green-dot"></span></a></span></footer>
+        </div>
+        <section class="settings-page" id="settingsPage" hidden>
+          <div class="content-wrap">
+            <div class="welcome-row">
+              <div>
+                <h1>系统设置</h1>
+                <p class="welcome-copy" id="settingsSummary">管理 Agent 与 LLM 运行配置，保存后即时生效。</p>
+              </div>
+            </div>
+            <article class="panel settings-panel">
+              <div class="panel-header"><h2>Agent / 模型设置</h2><span class="settings-note">设置存储于 Server 的 settings.json，环境变量仅在首次启动时作为默认值</span></div>
+              <form id="agentSettingsForm" class="settings-body">
+                <label class="settings-field settings-toggle">
+                  <span class="settings-label">启用 Agent<span class="settings-hint">开启后聊天面板与 MCP 端点可用</span></span>
+                  <input type="checkbox" id="settingEnabled" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">模型<span class="settings-hint">工具调用请使用 deepseek-chat</span></span>
+                  <input type="text" id="settingModel" placeholder="deepseek-chat" autocomplete="off" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">API Key<span class="settings-hint" id="settingApiKeyState">未配置</span></span>
+                  <input type="password" id="settingApiKey" placeholder="sk-..." autocomplete="new-password" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">API 地址<span class="settings-hint">OpenAI 兼容 /chat/completions 地址</span></span>
+                  <input type="text" id="settingLlmUrl" placeholder="https://api.deepseek.com" autocomplete="off" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">Agent Token<span class="settings-hint">dsh/MCP 服务凭据，留空表示不校验</span></span>
+                  <input type="password" id="settingAgentToken" placeholder="Bearer Token" autocomplete="new-password" />
+                </label>
+                <div class="settings-grid">
+                  <label class="settings-field">
+                    <span class="settings-label">并发会话数</span>
+                    <input type="number" id="settingMaxSessions" min="1" max="100" />
+                  </label>
+                  <label class="settings-field">
+                    <span class="settings-label">审批超时（毫秒）</span>
+                    <input type="number" id="settingApprovalTimeoutMs" min="1000" max="3600000" />
+                  </label>
+                </div>
+                <div class="settings-actions">
+                  <span class="settings-status" id="settingsStatus"></span>
+                  <button type="button" class="plain-button" id="settingsReload">重新加载</button>
+                  <button type="submit" class="button button-primary">保存设置</button>
+                </div>
+              </form>
+            </article>
+          </div>
+        </section>
         </div>
       </main>
     </div>
+    <button class="agent-launcher" id="agentLauncher" aria-label="打开运维智能体"><i data-lucide="bot"></i></button>
     <div class="toast" id="toast" role="status"><i data-lucide="check-circle-2"></i><span></span></div>
+    <div class="search-modal" id="commandModal" aria-hidden="true">
+      <div class="search-backdrop" data-command-close></div>
+      <div class="search-dialog command-dialog">
+        <div class="search-input-row"><i data-lucide="terminal"></i><div><strong id="commandTitle">执行指令</strong><span class="command-description" id="commandDescription"></span></div></div>
+        <div class="command-body">
+          <form id="commandForm">
+            <div id="commandFields"></div>
+            <div class="command-result" id="commandResult" hidden></div>
+            <div class="command-actions">
+              <button type="button" class="plain-button" data-command-close>取消</button>
+              <button type="submit" class="button button-primary" id="commandSubmit"><span>执行</span></button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="search-modal" id="confirmModal" aria-hidden="true">
+      <div class="search-backdrop" data-confirm-close></div>
+      <div class="search-dialog command-dialog">
+        <div class="search-input-row"><i data-lucide="alert-triangle"></i><strong>确认执行高风险操作</strong></div>
+        <div class="command-body">
+          <p class="confirm-message" id="confirmMessage"></p>
+          <div class="command-actions">
+            <button type="button" class="plain-button" data-confirm-close>取消</button>
+            <button type="button" class="button button-primary" id="confirmExecute">确认执行</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="search-modal" id="searchModal" aria-hidden="true"><div class="search-backdrop"></div><div class="search-dialog"><div class="search-input-row"><i data-lucide="search"></i><input id="searchInput" placeholder="搜索 Client、串口设备或状态..." /><kbd>ESC</kbd></div><div class="search-suggestions"><span>试试搜索</span><button data-search="client-001">client-001</button><button data-search="/dev/ttyUSB0">/dev/ttyUSB0</button><button data-search="离线设备">离线设备</button></div></div></div>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.js"></script>
     <script src="app.js"></script>

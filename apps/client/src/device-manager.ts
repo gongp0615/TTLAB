@@ -12,8 +12,9 @@ export interface DeviceManagerOptions {
   stateDirectory: string;
   controlSelector?: string | undefined;
   logSelector?: string | undefined;
-  probeEnabled?: boolean;
+  probeEnabled?: boolean | undefined;
   probePort?: ((path: string, timeoutMs: number) => Promise<boolean>) | undefined;
+  discoverPorts?: (() => SerialPortInfo[]) | undefined;
   onLog?: ((chunk: DeviceLogChunk) => void) | undefined;
   onLogError?: ((port: SerialDevice, error: Error) => void) | undefined;
 }
@@ -46,7 +47,7 @@ export class DeviceManager {
   }
 
   async refresh(): Promise<boolean> {
-    const ports = discoverSerialPorts();
+    const ports = (this.options.discoverPorts ?? discoverSerialPorts)();
     const hardwareSignature = ports.map((port) => `${port.deviceId}:${port.path}:${port.hardwareKey ?? ''}`).sort().join('|');
     if (hardwareSignature === this.signature) return false;
     const binding = this.readBinding();

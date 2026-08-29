@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let runtime = { clients: [], devices: [] };
   let clientFilter = 'all';
+  const lastResults = {};
   const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
   const statusLabel = { online: '在线', syncing: '恢复中', offline: '离线', available: '可用', busy: '使用中', error: '异常', removed: '已移除', identified: '已识别', matched: '已匹配', partial: '部分连接', ambiguous: '待确认' };
 
@@ -24,41 +25,174 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#clientMetric').textContent = String(onlineClients).padStart(2, '0');
     document.querySelector('#clientMetricFoot').textContent = `${runtime.clients.length} 个 Client 已连接或登记`;
     document.querySelector('#deviceMetric').textContent = String(devices.length).padStart(2, '0');
-    document.querySelector('#deviceMetricFoot').textContent = `${devices.filter((device) => device.status === 'available').length} 个设备可操作`;
+    document.querySelector('#deviceMetricFoot').textContent = `${devices.filter((device) => device.status === 'identified').length} 个设备可操作`;
     document.querySelector('#commandMetric').textContent = String(activeCommands).padStart(2, '0');
-    document.querySelector('#runtimeSummary').textContent = runtime.clients.length ? `${onlineClients}/${runtime.clients.length} 个 Client 在线，状态来自实时快照。` : '当前没有 Client 快照。';
+    document.querySelector('#runtimeSummary').textContent = runtime.clients.length ? `${onlineClients}/${runtime.clients.length} 个 Client 在线。` : '当前没有 Client 快照。';
 
     const clientRows = document.querySelector('#serviceRows');
     clientRows.innerHTML = clients.length ? clients.map((client) => {
       const initials = escapeHtml(client.clientId.slice(-2).toUpperCase());
       const version = escapeHtml(client.hello?.clientVersion ?? '版本未知');
-      return `<tr><td><div class="service-name"><div class="service-logo blue-logo">${initials}</div><div><strong>${escapeHtml(client.clientId)}</strong><span>Linux Client / ${version}</span></div></div></td><td><span class="status-tag ${client.status === 'online' ? 'healthy' : 'warning'}"><span></span>${statusLabel[client.status] ?? '未知'}</span></td></tr>`;
+      const hostname = escapeHtml(client.hello?.hostname ?? '');
+      const addresses = (client.hello?.addresses ?? []).filter((address) => !address.includes(':')).map(escapeHtml).join(' · ');
+      const meta = [addresses, `Linux Client / ${version}`].filter(Boolean).join(' · ');
+      return `<tr><td><div class="service-name"><div class="service-logo blue-logo">${initials}</div><div><strong>${hostname || escapeHtml(client.clientId)}</strong><span>${meta}</span></div></div></td><td><span class="status-tag ${client.status === 'online' ? 'healthy' : 'warning'}"><span></span>${statusLabel[client.status] ?? '未知'}</span></td></tr>`;
     }).join('') : '<tr><td colspan="2"><div class="empty-state">没有符合条件的 Client</div></td></tr>';
 
     const deviceList = document.querySelector('#incidentList');
     deviceList.innerHTML = devices.length ? devices.map((device) => {
-      const ports = device.ports ?? [device];
       const canControl = device.deviceType === 'tv-stick-test-box' && device.status === 'identified';
-      const actions = canControl ? `<div class="device-actions"><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="system.ping">检查</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.status">HDMI 状态</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.switch" data-parameters='{"output":"TVA"}'>切换 TVA</button><button class="device-command" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="hdmi.switch" data-parameters='{"output":"TVB"}'>切换 TVB</button></div>` : '';
-      return `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'identified' || device.status === 'matched' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.displayName ?? device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.deviceType ?? 'generic-serial')} · ${escapeHtml(device.stableIdentity ?? device.deviceId)}</p><div class="port-list">${ports.map((port) => `<div class="port-row"><span>${escapeHtml(port.portRole ?? 'unknown')}</span><code>${escapeHtml(port.path)}</code><em>${statusLabel[port.status] ?? '未知'}</em></div>`).join('')}</div>${actions}</div>`;
+      const actions = canControl && Array.isArray(device.operations) && device.operations.length > 0 ? `<div class="device-actions">${device.operations.map((operation) => {
+        const hasParams = (operation.parameters ?? []).length > 0;
+        return `<button class="device-command${operation.risk === 'high' ? ' device-command-danger' : ''}" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="${escapeHtml(operation.operation)}" data-has-params="${hasParams ? '1' : '0'}">${escapeHtml(operation.displayName ?? operation.operation)}</button>`;
+      }).join('')}</div>` : '';
+      const last = lastResults[device.deviceId];
+      const resultHtml = last ? `<div class="device-result ${last.kind}">${escapeHtml(last.message)}</div>` : '';
+      return `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'identified' || device.status === 'matched' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.displayName ?? device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.deviceType ?? 'generic-serial')}</p>${resultHtml}${actions}</div>`;
     }).join('') : '<div class="empty-state">没有发现串口设备</div>';
-    document.querySelectorAll('.device-command').forEach((button) => button.addEventListener('click', () => { void executeCommand(button); }));
+    document.querySelectorAll('.device-command').forEach((button) => button.addEventListener('click', () => { void openDeviceOperation(button); }));
     if (iconRoot) iconRoot.createIcons();
   };
 
-  const executeCommand = async (button) => {
-    button.disabled = true;
+  const openModal = (selector) => { const modal = document.querySelector(selector); modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); };
+  const closeModal = (selector) => { const modal = document.querySelector(selector); modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); };
+  let activeOperation = null;
+  let pendingCommand = null;
+
+  const showCommandResult = (message, kind) => {
+    const el = document.querySelector('#commandResult');
+    el.hidden = false;
+    el.className = `command-result${kind === 'success' ? ' success' : kind === 'error' ? ' error' : ''}`;
+    el.textContent = message;
+  };
+
+  const pollCommand = async (commandId) => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const response = await fetch(`/api/v1/commands/${encodeURIComponent(commandId)}`);
+      const body = await response.json();
+      const status = body.data?.status;
+      if (status === 'result' || status === 'failed') return body.data;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    return { status: 'timeout' };
+  };
+
+  const runCommand = async (device, operation, parameters, mode) => {
+    const submitButton = document.querySelector('#commandSubmit');
+    if (submitButton) submitButton.disabled = true;
+    lastResults[device.deviceId] = { message: mode === 'inline' ? '执行中...' : '指令已下发，等待执行结果...', kind: 'pending' };
+    render();
     try {
-      const response = await fetch(`/api/v1/clients/${encodeURIComponent(button.dataset.clientId)}/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: button.dataset.deviceId, operation: button.dataset.operation, parameters: JSON.parse(button.dataset.parameters ?? '{}') }) });
+      const response = await fetch(`/api/v1/clients/${encodeURIComponent(device.clientId)}/commands`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: device.deviceId, operation: operation.operation, parameters }),
+      });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error?.message ?? '操作失败');
-      showToast(`指令已下发：${body.data.commandId}`);
+      if (mode === 'modal') showCommandResult(`指令已下发：${body.data.commandId}，等待执行结果...`, 'pending');
+      const result = await pollCommand(body.data.commandId);
+      let message;
+      let kind;
+      if (result.status === 'result' && result.result?.success) {
+        message = result.result.output || '执行成功';
+        kind = 'success';
+      } else if (result.status === 'result' || result.status === 'failed') {
+        message = result.result?.error?.message ?? '执行失败';
+        kind = 'error';
+      } else {
+        message = `指令超时（状态：${result.status}）`;
+        kind = 'error';
+      }
+      lastResults[device.deviceId] = { message, kind };
+      if (mode === 'modal') showCommandResult(message, kind);
+      else render();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : '操作失败');
+      const message = error instanceof Error ? error.message : '操作失败';
+      lastResults[device.deviceId] = { message, kind: 'error' };
+      if (mode === 'modal') showCommandResult(message, 'error');
+      else render();
     } finally {
-      button.disabled = false;
+      if (submitButton) submitButton.disabled = false;
     }
   };
+
+  const openDeviceOperation = (button) => {
+    const device = runtime.devices.find((item) => item.deviceId === button.dataset.deviceId);
+    const operation = device?.operations?.find((item) => item.operation === button.dataset.operation);
+    if (!device || !operation) { showToast('操作不可用'); return; }
+    // 点击设备操作按钮时，先清理该设备上次的输出，避免残留旧状态影响判断
+    delete lastResults[device.deviceId];
+    const resultEl = document.querySelector('#commandResult');
+    resultEl.hidden = true;
+    resultEl.className = 'command-result';
+    resultEl.textContent = '';
+    render();
+    if ((operation.parameters ?? []).length > 0) openCommandModal(device, operation);
+    else void runCommand(device, operation, {}, 'inline');
+  };
+
+  const openCommandModal = (device, operation) => {
+    activeOperation = { device, operation };
+    document.querySelector('#commandTitle').textContent = operation.displayName ?? operation.operation;
+    document.querySelector('#commandDescription').textContent = operation.description ?? '';
+    document.querySelector('#commandFields').innerHTML = (operation.parameters ?? []).map((schema) => {
+      const label = schema.label ?? schema.name;
+      const required = schema.required !== false;
+      if (schema.type === 'enum') {
+        const options = (schema.options ?? []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('');
+        return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><select name="${escapeHtml(schema.name)}">${options}</select></div>`;
+      }
+      return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><input name="${escapeHtml(schema.name)}" type="text" placeholder="${escapeHtml(schema.placeholder ?? '')}" ${required ? 'required' : ''} data-pattern="${escapeHtml(schema.pattern ?? '')}" /><em class="field-error"></em></div>`;
+    }).join('');
+    const resultEl = document.querySelector('#commandResult');
+    resultEl.hidden = true;
+    resultEl.className = 'command-result';
+    resultEl.textContent = '';
+    document.querySelector('#commandSubmit').disabled = false;
+    openModal('#commandModal');
+  };
+
+  document.querySelector('#commandForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!activeOperation) return;
+    const { device, operation } = activeOperation;
+    const values = new FormData(event.currentTarget);
+    const parameters = {};
+    let valid = true;
+    for (const schema of operation.parameters ?? []) {
+      const value = String(values.get(schema.name) ?? '');
+      const field = event.currentTarget.querySelector(`[name="${schema.name}"]`);
+      const errorEl = field?.closest('.command-field')?.querySelector('.field-error');
+      if (schema.type === 'string' && schema.pattern && value && !new RegExp(schema.pattern).test(value)) {
+        if (errorEl) errorEl.textContent = '格式不正确';
+        valid = false;
+      } else if (errorEl) {
+        errorEl.textContent = '';
+      }
+      parameters[schema.name] = value;
+    }
+    if (!valid) return;
+    if (operation.risk === 'high') {
+      pendingCommand = { device, operation, parameters };
+      document.querySelector('#confirmMessage').textContent = `确定要对 ${device.displayName} 执行“${operation.displayName ?? operation.operation}”吗？此操作可能导致设备不可用。`;
+      openModal('#confirmModal');
+      return;
+    }
+    void runCommand(device, operation, parameters, 'modal');
+  });
+
+  document.querySelector('#confirmExecute').addEventListener('click', () => {
+    if (!pendingCommand) return;
+    const { device, operation, parameters } = pendingCommand;
+    pendingCommand = null;
+    closeModal('#confirmModal');
+    void runCommand(device, operation, parameters, 'modal');
+  });
+
+  document.querySelectorAll('[data-command-close]').forEach((el) => el.addEventListener('click', () => closeModal('#commandModal')));
+  document.querySelectorAll('[data-confirm-close]').forEach((el) => el.addEventListener('click', () => { closeModal('#confirmModal'); pendingCommand = null; }));
 
   const appendLog = (chunk) => {
     const output = document.querySelector('#logOutput');
@@ -81,12 +215,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const dashboardWrap = document.querySelector('.content-wrap');
+  const settingsPage = document.querySelector('#settingsPage');
+  const showDashboard = () => { dashboardWrap.hidden = false; settingsPage.hidden = true; };
+  const showSettingsPage = () => { dashboardWrap.hidden = true; settingsPage.hidden = false; void loadAgentSettings(); };
+
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach((nav) => nav.classList.remove('active'));
     item.classList.add('active');
     const page = item.dataset.page;
     document.querySelector('#breadcrumbPage').textContent = page;
-    if (page !== '概览') showToast(`页面“${page}”将在设备管理模块中开放`);
+    if (page === '概览') showDashboard();
+    else if (page === '智能体') openAgentPanel();
+    else if (page === '系统设置') showSettingsPage();
+    else showToast(`页面“${page}”将在设备管理模块中开放`);
   }));
 
   document.querySelector('#deployButton').addEventListener('click', () => { void loadRuntime(); showToast('正在刷新实时状态'); });
@@ -102,8 +244,257 @@ document.addEventListener('DOMContentLoaded', () => {
   modal.querySelectorAll('[data-search]').forEach((button) => button.addEventListener('click', () => { closeSearch(); showToast(`正在搜索：${button.dataset.search}`); }));
   document.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openSearch(); }
-    if (event.key === 'Escape' && modal.classList.contains('open')) closeSearch();
+    if (event.key === 'Escape') {
+      if (modal.classList.contains('open')) closeSearch();
+      if (document.querySelector('#commandModal').classList.contains('open')) closeModal('#commandModal');
+      if (document.querySelector('#confirmModal').classList.contains('open')) { closeModal('#confirmModal'); pendingCommand = null; }
+    }
   });
+
+  const agentPanel = document.querySelector('#agentPanel');
+  const agentLauncher = document.querySelector('#agentLauncher');
+  const agentMessages = document.querySelector('#agentMessages');
+  const agentEmpty = document.querySelector('#agentEmpty');
+  const agentInput = document.querySelector('#agentInput');
+  const agentSend = document.querySelector('#agentSend');
+  const agentConn = document.querySelector('#agentConn');
+  let agentSocket = null;
+  let agentSessionId = '';
+  let agentOpen = false;
+  let agentBusy = false;
+  let assistantBubble = null;
+
+  const openAgentPanel = () => {
+    agentPanel.classList.add('open');
+    agentPanel.setAttribute('aria-hidden', 'false');
+    agentOpen = true;
+    connectAgent();
+    setTimeout(() => agentInput.focus(), 80);
+  };
+  const closeAgentPanel = () => {
+    agentPanel.classList.remove('open');
+    agentPanel.setAttribute('aria-hidden', 'true');
+    agentOpen = false;
+  };
+
+  const setAgentConn = (online) => {
+    agentConn.classList.toggle('online', online);
+    agentConn.querySelector('em').textContent = online ? '在线' : '离线';
+  };
+
+  const setAgentBusy = (busy) => {
+    agentBusy = busy;
+    agentSend.disabled = busy || agentInput.value.trim().length === 0;
+    agentInput.placeholder = busy ? '智能体正在处理...' : '例如：为什么 TVB-02 日志报错？';
+  };
+
+  const scrollAgent = () => { agentMessages.scrollTop = agentMessages.scrollHeight; };
+
+  const addAgentBubble = (role, text) => {
+    agentEmpty.hidden = true;
+    const bubble = document.createElement('div');
+    bubble.className = `agent-bubble ${role === 'user' ? 'agent-user' : 'agent-assistant'}`;
+    bubble.textContent = text;
+    agentMessages.appendChild(bubble);
+    scrollAgent();
+    return bubble;
+  };
+
+  const addAgentToolCard = (message) => {
+    agentEmpty.hidden = true;
+    const card = document.createElement('div');
+    card.className = 'agent-tool-card running';
+    card.innerHTML = `<div class="agent-tool-title"><i data-lucide="wrench"></i><strong>${escapeHtml(message.tool ?? '')}</strong><span class="agent-tool-state">运行中</span></div><pre class="agent-tool-args">${escapeHtml(JSON.stringify(message.args ?? {}, null, 2))}</pre>`;
+    agentMessages.appendChild(card);
+    scrollAgent();
+    if (iconRoot) iconRoot.createIcons();
+    return card;
+  };
+
+  const addAgentApprovalCard = (message) => {
+    agentEmpty.hidden = true;
+    const card = document.createElement('div');
+    card.className = 'agent-approval-card';
+    card.innerHTML = `
+      <div class="agent-approval-title"><i data-lucide="shield-alert"></i><strong>需要确认</strong></div>
+      <p class="agent-approval-reason">${escapeHtml(message.reason ?? `调用工具 ${message.tool}`)}</p>
+      <pre class="agent-tool-args">${escapeHtml(JSON.stringify(message.args ?? {}, null, 2))}</pre>
+      <div class="agent-approval-actions">
+        <button type="button" class="plain-button" data-decision="rejected">拒绝</button>
+        <button type="button" class="button button-primary" data-decision="approved">确认执行</button>
+      </div>
+      <span class="agent-approval-countdown"></span>`;
+    agentMessages.appendChild(card);
+    scrollAgent();
+    const countdown = card.querySelector('.agent-approval-countdown');
+    const expires = Date.parse(message.expiresAt ?? '');
+    let timer;
+    const tick = () => {
+      if (card.classList.contains('answered')) { clearInterval(timer); return; }
+      const remain = expires - Date.now();
+      if (!Number.isFinite(expires) || remain <= 0) { clearInterval(timer); countdown.textContent = '已超时，自动拒绝'; return; }
+      countdown.textContent = `${Math.ceil(remain / 1000)} 秒内未确认将自动拒绝`;
+    };
+    tick();
+    timer = setInterval(tick, 1000);
+    card.querySelectorAll('[data-decision]').forEach((button) => button.addEventListener('click', () => {
+      if (!agentSocket || agentSocket.readyState !== WebSocket.OPEN || card.classList.contains('answered')) return;
+      const decision = button.dataset.decision;
+      agentSocket.send(JSON.stringify({ type: 'agent.approval.response', sessionId: agentSessionId, approvalId: message.approvalId, decision }));
+      card.classList.add('answered');
+      card.querySelector('.agent-approval-actions').style.display = 'none';
+      countdown.textContent = decision === 'approved' ? '已确认，正在执行...' : '已拒绝';
+    }));
+    if (iconRoot) iconRoot.createIcons();
+  };
+
+  const handleAgentMessage = (message) => {
+    switch (message.type) {
+      case 'agent.session.ready':
+        agentSessionId = message.sessionId ?? '';
+        setAgentConn(true);
+        break;
+      case 'agent.session.status':
+        setAgentBusy(message.status === 'thinking' || message.status === 'awaiting_approval');
+        break;
+      case 'agent.message.delta':
+        if (!assistantBubble) assistantBubble = addAgentBubble('assistant', '');
+        assistantBubble.textContent += message.delta ?? '';
+        scrollAgent();
+        break;
+      case 'agent.message.done':
+        assistantBubble = null;
+        setAgentBusy(false);
+        break;
+      case 'agent.tool.status':
+        if (message.toolStatus === 'running') addAgentToolCard(message);
+        else {
+          const cards = agentMessages.querySelectorAll('.agent-tool-card.running');
+          const card = cards[cards.length - 1];
+          if (card) {
+            card.classList.remove('running');
+            card.classList.add(message.toolStatus === 'error' ? 'error' : 'done');
+            card.querySelector('.agent-tool-state').textContent = message.toolStatus === 'error' ? '失败' : '完成';
+            if (message.result) {
+              const pre = card.querySelector('pre.agent-tool-args');
+              if (pre) pre.textContent = message.result.text;
+            }
+          }
+        }
+        scrollAgent();
+        break;
+      case 'agent.approval.request':
+        addAgentApprovalCard(message);
+        break;
+      case 'agent.error':
+        addAgentBubble('assistant', `⚠ ${message.message ?? message.code ?? '智能体错误'}`);
+        assistantBubble = null;
+        setAgentBusy(false);
+        break;
+      default:
+        break;
+    }
+  };
+
+  const connectAgent = () => {
+    if (agentSocket && (agentSocket.readyState === WebSocket.OPEN || agentSocket.readyState === WebSocket.CONNECTING)) return;
+    const agentUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/agent/session`;
+    agentSocket = new WebSocket(agentUrl);
+    agentSocket.addEventListener('open', () => setAgentConn(true));
+    agentSocket.addEventListener('message', (event) => {
+      try { handleAgentMessage(JSON.parse(event.data)); } catch (error) { showToast(error instanceof Error ? error.message : '智能体消息格式错误'); }
+    });
+    agentSocket.addEventListener('close', () => {
+      agentSocket = null;
+      setAgentConn(false);
+      setAgentBusy(false);
+      assistantBubble = null;
+      if (agentOpen) setTimeout(connectAgent, 2000);
+    });
+    agentSocket.addEventListener('error', () => { agentSocket?.close(); });
+  };
+
+  const sendAgentMessage = () => {
+    const content = agentInput.value.trim();
+    if (!content || agentBusy || !agentSocket || agentSocket.readyState !== WebSocket.OPEN) return;
+    addAgentBubble('user', content);
+    agentInput.value = '';
+    setAgentBusy(true);
+    agentSocket.send(JSON.stringify({ type: 'agent.message.submit', sessionId: agentSessionId, content }));
+  };
+
+  agentLauncher.addEventListener('click', () => (agentOpen ? closeAgentPanel() : openAgentPanel()));
+  document.querySelector('#agentPanelClose').addEventListener('click', closeAgentPanel);
+  agentSend.addEventListener('click', sendAgentMessage);
+  agentInput.addEventListener('input', () => { agentSend.disabled = agentBusy || agentInput.value.trim().length === 0; });
+  agentInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendAgentMessage(); }
+  });
+
+  const settingsForm = document.querySelector('#agentSettingsForm');
+  const settingsStatus = document.querySelector('#settingsStatus');
+  const settingApiKeyState = document.querySelector('#settingApiKeyState');
+  const setSettingsStatus = (message, kind) => {
+    settingsStatus.textContent = message;
+    settingsStatus.className = `settings-status${kind ? ` ${kind}` : ''}`;
+  };
+
+  const loadAgentSettings = async () => {
+    try {
+      const response = await fetch('/api/v1/settings/agent');
+      if (!response.ok) throw new Error('无法读取设置');
+      const data = (await response.json()).data;
+      document.querySelector('#settingEnabled').checked = data.enabled;
+      document.querySelector('#settingModel').value = data.model;
+      document.querySelector('#settingLlmUrl').value = data.llmUrl;
+      document.querySelector('#settingMaxSessions').value = String(data.maxSessions);
+      document.querySelector('#settingApprovalTimeoutMs').value = String(data.approvalTimeoutMs);
+      document.querySelector('#settingApiKey').value = '';
+      document.querySelector('#settingAgentToken').value = '';
+      settingApiKeyState.textContent = data.apiKeyConfigured ? `已配置（${data.apiKeyHint || '****'}）` : '未配置';
+      setSettingsStatus('已加载', 'ok');
+    } catch (error) {
+      setSettingsStatus(error instanceof Error ? error.message : '加载失败', 'error');
+    }
+  };
+
+  const saveAgentSettings = async () => {
+    const body = {
+      enabled: document.querySelector('#settingEnabled').checked,
+      model: document.querySelector('#settingModel').value.trim(),
+      llmUrl: document.querySelector('#settingLlmUrl').value.trim(),
+      maxSessions: Number(document.querySelector('#settingMaxSessions').value),
+      approvalTimeoutMs: Number(document.querySelector('#settingApprovalTimeoutMs').value),
+    };
+    const apiKey = document.querySelector('#settingApiKey').value.trim();
+    const agentToken = document.querySelector('#settingAgentToken').value.trim();
+    if (apiKey) body.apiKey = apiKey;
+    if (agentToken) body.agentToken = agentToken;
+    try {
+      const response = await fetch('/api/v1/settings/agent', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message ?? '保存失败');
+      settingApiKeyState.textContent = result.data.apiKeyConfigured ? `已配置（${result.data.apiKeyHint || '****'}）` : '未配置';
+      document.querySelector('#settingApiKey').value = '';
+      document.querySelector('#settingAgentToken').value = '';
+      setSettingsStatus('已保存并生效', 'ok');
+      showToast('Agent 设置已保存');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存失败';
+      setSettingsStatus(message, 'error');
+      showToast(message);
+    }
+  };
+
+  settingsForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void saveAgentSettings();
+  });
+  document.querySelector('#settingsReload').addEventListener('click', () => void loadAgentSettings());
 
   const eventsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/events`;
   const events = new WebSocket(eventsUrl);

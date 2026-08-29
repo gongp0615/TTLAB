@@ -157,6 +157,8 @@ Server 支持 Client 身份认证和用户权限控制。当前为简化联调�
 
 首版本采用 TypeScript/Node.js，Server 不持久化业务状态。Server 重启后，Client 会自动重连并重新发送完整快照；因此首版本不提供跨 Server 重启的历史操作查询，也不会自动重放重启前的指令。
 
+设备日志、事件、指令生命周期和审计记录通过结构化文件日志（logstore）持久化，可通过 `GET /api/v1/logs/query` 与 `GET /api/v1/audit` 查询历史数据；配置见 `TTLAB_LOG_DIR`。Agent 接入设计见 [docs/agent-integration.md](docs/agent-integration.md)。
+
 当前工程目录：
 
 ```text
@@ -178,7 +180,7 @@ npm test
 npm run build
 ```
 
-启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`）：
+启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`；缺失时自动从 `server.env.example` 复制创建）：
 
 ```bash
 ./scripts/start-server.sh
@@ -190,7 +192,7 @@ npm run build
 ./scripts/start-client.sh
 ```
 
-Server 默认使用 HTTP/WS 并监听 `80`，不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。
+Server 默认使用 HTTP/WS 并监听 `9000`，不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。
 
 ### 一键部署
 

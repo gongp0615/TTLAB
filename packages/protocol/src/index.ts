@@ -41,6 +41,8 @@ export interface ClientHello {
   platform: string;
   architecture: string;
   capabilities: string[];
+  hostname?: string;
+  addresses?: string[];
 }
 
 export interface SerialDevice {
@@ -66,12 +68,33 @@ export interface ManagedDevice {
   status: 'identified' | 'matched' | 'partial' | 'ambiguous' | 'offline' | 'error';
   ports: SerialDevice[];
   capabilities: string[];
+  operations?: DeviceOperation[];
   observedAt: string;
   identification?: {
     method: 'hardware' | 'probe' | 'binding';
     confidence: 'high' | 'medium' | 'low';
     message?: string;
   };
+}
+
+export interface CommandParameterSchema {
+  name: string;
+  label?: string;
+  type: 'enum' | 'string';
+  options?: string[];
+  pattern?: string;
+  placeholder?: string;
+  required?: boolean;
+}
+
+export interface DeviceOperation {
+  operation: string;
+  displayName?: string;
+  description?: string;
+  risk?: 'low' | 'high';
+  command: string;
+  responsePrefix?: string;
+  parameters: CommandParameterSchema[];
 }
 
 export interface DeviceLogChunk {
@@ -175,7 +198,10 @@ export function parseClientHello(payload: unknown): ClientHello {
   const value = object(payload, 'hello');
   const capabilities = value.capabilities;
   if (!Array.isArray(capabilities) || !capabilities.every((item) => typeof item === 'string')) throw new ProtocolError('INVALID_ARGUMENT', 'capabilities must be a string array');
-  return { clientVersion: stringField(value, 'clientVersion'), protocolVersion: stringField(value, 'protocolVersion'), bootId: stringField(value, 'bootId'), platform: stringField(value, 'platform'), architecture: stringField(value, 'architecture'), capabilities };
+  const hello: ClientHello = { clientVersion: stringField(value, 'clientVersion'), protocolVersion: stringField(value, 'protocolVersion'), bootId: stringField(value, 'bootId'), platform: stringField(value, 'platform'), architecture: stringField(value, 'architecture'), capabilities };
+  if (typeof value.hostname === 'string' && value.hostname.length > 0) hello.hostname = value.hostname;
+  if (Array.isArray(value.addresses) && value.addresses.every((item) => typeof item === 'string')) hello.addresses = value.addresses as string[];
+  return hello;
 }
 
 export function parseClientSnapshot(payload: unknown): ClientSnapshot {
@@ -195,6 +221,36 @@ export function parseCommandResult(payload: unknown): CommandResult {
   const value = object(payload, 'command result');
   if (typeof value.success !== 'boolean') throw new ProtocolError('INVALID_ARGUMENT', 'command result success is required');
   return value as unknown as CommandResult;
+}
+
+// Validates command parameters against a device operation catalog entry.
+// Returns a human-readable error message, or undefined when valid.
+export function validateCommandParameters(operation: DeviceOperation | undefined, parameters: Record<string, unknown>): string | undefined {
+  if (!operation) return 'operation is not supported';
+  if (!operation.parameters || operation.parameters.length === 0) return undefined;
+  const errors: string[] = [];
+  for (const schema of operation.parameters) {
+    const value = parameters[schema.name];
+    if (value === undefined || value === '') {
+      if (schema.required !== false) errors.push(`parameter ${schema.label ?? schema.name} is required`);
+      continue;
+    }
+    if (typeof value !== 'string') {
+      errors.push(`parameter ${schema.name} must be a string`);
+      continue;
+    }
+    if (schema.type === 'enum' && schema.options && !schema.options.includes(value)) {
+      errors.push(`parameter ${schema.name} must be one of ${schema.options.join(', ')}`);
+    }
+    if (schema.type === 'string' && schema.pattern) {
+      try {
+        if (!new RegExp(schema.pattern).test(value)) errors.push(`parameter ${schema.name} has an invalid format`);
+      } catch {
+        errors.push(`parameter ${schema.name} has an invalid pattern`);
+      }
+    }
+  }
+  return errors.length > 0 ? errors.join('; ') : undefined;
 }
 
 export function parseDeviceLogChunk(payload: unknown): DeviceLogChunk {

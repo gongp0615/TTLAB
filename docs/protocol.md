@@ -45,9 +45,16 @@
   "bootId": "boot_01J...",
   "platform": "linux",
   "architecture": "amd64",
-  "capabilities": ["serial", "tv-stick-test-box"]
+  "capabilities": ["serial", "tv-stick-test-box"],
+  "hostname": "device-01",
+  "addresses": ["192.168.1.5", "fe80::1"]
 }
 ```
+
+字段说明：
+
+- `hostname`：可选，设备主机名，由 `os.hostname()` 获取。
+- `addresses`：可选，设备所有非环回 IP 地址（IPv4 在前），由 `os.networkInterfaces()` 采集。
 
 ### `sync.request`
 

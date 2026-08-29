@@ -12,7 +12,14 @@ log() { printf '[ttlab-start] %s\n' "$*"; }
 [[ "$(uname -s)" == Linux ]] || fail 'run this script inside Linux or WSL'
 [[ "$(id -u)" -ne 0 ]] || fail 'run this script as a normal user; the script uses sudo only for Server startup'
 command -v sudo >/dev/null 2>&1 || fail 'sudo is required to bind Server to port 80'
-[[ -f "$PROJECT_ROOT/server.env" ]] || fail "server.env does not exist: $PROJECT_ROOT/server.env"
+if [[ ! -f "$PROJECT_ROOT/server.env" ]]; then
+  if [[ -f "$PROJECT_ROOT/server.env.example" ]]; then
+    cp "$PROJECT_ROOT/server.env.example" "$PROJECT_ROOT/server.env"
+    log 'created server.env from server.env.example; edit it to set the port and host'
+  else
+    fail "server.env does not exist: $PROJECT_ROOT/server.env"
+  fi
+fi
 
 cd "$PROJECT_ROOT"
 

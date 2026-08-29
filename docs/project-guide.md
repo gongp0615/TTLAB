@@ -36,6 +36,10 @@ tv-stick-test-box
 - HDMI 状态查询、HDMI 切换和设备检查操作。
 - 同一设备串口命令互斥，不同设备可以并行。
 - Client 断线重连、Server 重启后重新同步。
+- 设备日志、事件、指令生命周期和审计记录的文件持久化（logstore）与历史查询 API。
+- TTLAB MCP Server（`/mcp/v1`）：向 Agent（dsh）暴露设备查询、日志检索、指令下发等工具，高风险操作拒绝执行。
+- Agent 网关（`/api/v1/agent/session`）：Web 聊天面板对话、工具调用、高风险操作审批流，`server-native` 引擎接入 DeepSeek 兼容 API。
+- "系统设置"页面：Agent/模型配置（启用、模型、API Key、API 地址等）运行时修改并原地写入 `server.env`。
 - Updater 的 Hash、Ed25519 签名、架构、协议版本、自检和回滚检查。
 - 本地调试和 Server/Client 一键启动脚本。
 
@@ -44,7 +48,7 @@ tv-stick-test-box
 - Server 业务状态仍保存在内存中，重启后不会恢复历史数据。
 - Server 默认使用 HTTP/WS，Client 认证默认关闭。
 - Server 目前没有完整的 Web 用户认证和 RBAC。
-- 日志目前是实时转发，Server 不提供持久化历史日志查询。
+- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板/审批流已可用；dsh 实际联调待网络可用，见 [agent-integration.md](agent-integration.md)。
 - Test Box 的日志口需要根据真实设备确认，自动识别目前只负责控制口探测。
 - 当前配置默认将一个 Client 上发现的同类 Test Box 端点聚合为一个设备；同一 Client 挂载多台相同 Test Box 时，还需要增加按 USB 拓扑或显式绑定的分组配置。
 
@@ -52,6 +56,9 @@ tv-stick-test-box
 
 ```text
 apps/server/src/index.ts       Server HTTP、WebSocket、设备状态和指令路由
+apps/server/src/logstore/      结构化文件日志存储与查询（device/event/command/audit/agent）
+apps/server/src/mcp/           TTLAB MCP Server（JSON-RPC 协议、工具定义、参数校验）
+apps/server/src/agent-gateway/ Agent 网关（LLM 客户端、引擎、审批管理器、WebSocket 会话）
 apps/client/src/index.ts       Client 连接、同步、命令处理和更新请求
 apps/client/src/discovery.ts   串口发现、硬件特征匹配和设备聚合
 apps/client/src/device-manager.ts
@@ -73,11 +80,18 @@ server.env                     Server 默认运行配置
 
 ### 4.1 配置文件
 
-Server 从当前启动目录的 `server.env` 读取配置。仓库根目录已经包含一个无密钥的默认配置：
+Server 从当前启动目录的 `server.env` 读取配置。`server.env` 已被 git 忽略（含密钥，属本机配置），仓库中提供模板 `server.env.example`：
+
+```bash
+cp server.env.example server.env
+# 然后按需修改端口、地址和密钥
+```
+
+`server.env.example` 默认配置：
 
 ```ini
-TTLAB_SERVER_PORT=80
-TTLAB_PUBLIC_BASE_URL=http://127.0.0.1
+TTLAB_SERVER_PORT=9000
+TTLAB_PUBLIC_BASE_URL=http://127.0.0.1:9000
 TTLAB_CLIENT_AUTH_ENABLED=0
 TTLAB_CLIENT_TOKENS=
 TTLAB_RELEASE_DIR=/srv/ttlab/releases
@@ -92,7 +106,9 @@ TTLAB_TLS_CERT_FILE=
 TTLAB_PUBLIC_BASE_URL=http://Server的IP或域名
 ```
 
-该文件当前只包含非敏感默认值，可以作为仓库默认配置提交。启用认证后不要把真实 Token 写入仓库；应通过本机未提交配置或受控的 systemd 环境注入。
+启动脚本（`start-server.sh`/`start-client.sh`）在 `server.env` 缺失时自动从 `server.env.example` 复制创建。
+
+`server.env` 只包含本机非敏感默认值；启用认证或保存 Agent 密钥后不要提交该文件。Agent/模型相关键（`TTLAB_AGENT_*`、`TTLAB_DEEPSEEK_API_KEY`）可在 Web 控制台"系统设置 → Agent / 模型设置"页面修改，保存后原地写回 `server.env`；详见 [agent-integration.md](agent-integration.md) 第 8 节。
 
 ### 4.2 一键启动
 
@@ -167,7 +183,7 @@ source ~/.bashrc
 默认配置：
 
 ```text
-Server:       ws://127.0.0.1/agent/v1/session
+Server:       ws://127.0.0.1:9000/agent/v1/session
 认证:         关闭
 状态目录:     ~/.local/state/ttlab-client
 串口类型:     自动识别
@@ -378,7 +394,20 @@ DFU、重启、EDID 写入以及设备配置修改属于高风险操作，当前
 }
 ```
 
-Client 对日志分片限制大小，Server 实时转发。当前 Server 不持久化日志，Server 重启后只能接收新日志；需要历史日志时应增加日志存储和查询接口。
+Client 对日志分片限制大小，Server 实时转发，并将分片持久化到 `TTLAB_LOG_DIR`。Server 重启后仍可通过查询 API 检索历史日志。
+
+日志存储布局：
+
+```text
+<TTLAB_LOG_DIR>/
+  device/YYYY-MM-DD/<clientId>.jsonl   设备日志流
+  event/YYYY-MM-DD.jsonl               设备/Client 事件
+  command/YYYY-MM-DD.jsonl             指令生命周期
+  audit/YYYY-MM-DD.jsonl               用户/Agent 操作审计
+  agent/YYYY-MM-DD/<sessionId>.jsonl   Agent 会话
+```
+
+按天轮转、追加写入、批量缓冲定时落盘（`TTLAB_LOG_FLUSH_MS`），保留期由 `TTLAB_LOG_RETENTION_DAYS` 控制。详见 [agent-integration.md](agent-integration.md) 第 6 节。
 
 ## 10. Server API
 
@@ -388,12 +417,26 @@ Client 对日志分片限制大小，Server 实时转发。当前 Server 不持�
 GET  /healthz
 GET  /api/v1/clients
 GET  /api/v1/devices
+GET  /api/v1/logs/query
+GET  /api/v1/audit
+GET  /api/v1/settings/agent
+PUT  /api/v1/settings/agent
 GET  /api/v1/commands/:commandId
 POST /api/v1/clients/:clientId/commands
 POST /api/v1/clients/:clientId/update
+POST /mcp/v1                MCP 端点（Agent/dsh 接入，需 TTLAB_AGENT_ENABLED=1）
+WS   /api/v1/agent/session  Agent 聊天会话（需 TTLAB_AGENT_ENABLED=1）
 WS   /api/v1/events
 WS   /agent/v1/session
 GET  /agent/v1/releases/:version/:artifact
+```
+
+日志与审计查询示例：
+
+```bash
+curl 'http://127.0.0.1/api/v1/logs/query?type=device&clientId=<client-id>&keyword=error'
+curl 'http://127.0.0.1/api/v1/logs/query?type=command&commandId=<command-id>'
+curl 'http://127.0.0.1/api/v1/audit?keyword=command.dispatch'
 ```
 
 发送 Test Box 检查命令的示例：
@@ -504,7 +547,7 @@ version\nplatform\narchitecture\nsha256
 npm test
 ```
 
-当前测试覆盖 17 项：
+当前测试覆盖 81 项：
 
 - 协议 Envelope 和字段校验。
 - 日志分片大小和字段校验。
@@ -516,6 +559,13 @@ npm test
 - Client 进程身份持久化和重连。
 - Server 断线和重连。
 - HTTPS/WSS 配置。
+- logstore 写入、轮转、清理、查询、分页、字节预算截断和写失败降级。
+- Server 设备日志、指令生命周期和审计落盘与查询 API。
+- MCP JSON-RPC 协议、工具列表、参数校验、高风险操作拒绝。
+- MCP HTTP 端点鉴权、SSE 响应、查询/下发/审计全链路。
+- Agent 审批管理器、引擎工具循环、审批拦截与超时/拒绝处理。
+- Agent 网关全链路（对话→工具→审批→执行→回复→审计）与功能开关。
+- 设置存储（配置文件读写、掩码、校验、损坏文件回退）与设置 API 运行时生效。
 - Updater 架构、协议版本、签名、Hash、自检和回滚。
 
 额外检查：
@@ -539,11 +589,11 @@ git diff --check
 ### Server 启动失败
 
 ```bash
-sudo ss -ltnp | grep ':80'
-curl http://127.0.0.1/healthz
+sudo ss -ltnp | grep ':9000'
+curl http://127.0.0.1:9000/healthz
 ```
 
-通常原因是 80 端口已被占用或 Server 没有使用 root 启动。
+通常原因是 9000 端口已被占用或 Server 没有使用 root 启动。
 
 ### Client 显示 0 个串口
 
@@ -596,6 +646,7 @@ Server root 运行
 - [部署说明](deployment.md)
 - [更新和 systemd](update-and-systemd.md)
 - [测试与运维](test-and-operations.md)
+- [Agent 集成设计](agent-integration.md)
 - [TV Stick Test Box 接入](tv-stick-test-box.md)
 - [TV Stick Test Box 用户手册](../TV-Stick-Test-Box-User-Manual-v02.pdf)
 - [LAA 介绍](../LAA%20-%20Intro..pdf)
