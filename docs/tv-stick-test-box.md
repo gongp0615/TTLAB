@@ -4,7 +4,7 @@
 
 Client 会把同一台 Test Box 暴露的多个 USB 串口聚合成一个 `tv-stick-test-box` 设备。每个串口是设备下的端口资源，不再单独作为一个物理设备展示。
 
-当前设备类型配置为 `device-types/tv-stick-test-box.json`，匹配：
+当前设备类型配置为 `device-types/tv-stick-test-box/device.json`，匹配：
 
 - GigaDevice GD32 CDC ACM：`28e9:018a`
 - Silicon Labs CP2105 Dual UART：`10c4:ea70`
@@ -38,7 +38,7 @@ TTLAB_TVBOX_LOG_PORT='serial:usb-...if01-port0' \
 
 ## 4. 控制能力
 
-Test Box 支持的 10 个操作统一声明在 `device-types/tv-stick-test-box.json` 的 `operations` 目录中，每个操作包含显示名、描述、风险级别、AT 命令模板、响应前缀和参数 schema（`enum` 下拉或 `string` 带 pattern 校验）。Client 用它生成 AT 命令，Server 用它做下发前的参数校验，Web 控制台按它动态渲染操作按钮和参数表单。新增操作只需改这一个 JSON。
+Test Box 支持的 10 个操作统一声明在 `device-types/tv-stick-test-box/device.json` 的 `operations` 目录中，每个操作包含显示名、描述、风险级别、AT 命令模板、响应前缀和参数 schema（`enum` 下拉或 `string` 带 pattern 校验）。Client 用它生成 AT 命令，Server 用它做下发前的参数校验，Web 控制台按它动态渲染操作按钮和参数表单。新增操作只需改这一个 JSON。
 
 | 操作 | 参数 | 风险 |
 |---|---|---|
@@ -56,6 +56,8 @@ Test Box 支持的 10 个操作统一声明在 `device-types/tv-stick-test-box.j
 Web 控制台在设备 `identified` 后显示全部操作按钮：无参操作一键执行；有参操作弹出表单（下拉/输入框按 schema 前端校验）；`risk: high` 的操作执行前二次确认；执行后轮询展示结果。
 
 DFU 复位、设备重启等高风险操作已在目录中标记 `high`，执行前必须二次确认；权限和审批策略仍属后续安全阶段。
+
+固件镜像保存在设备类型子目录 `device-types/tv-stick-test-box/firmware/`（当前为 `Panda_COM-V39-release.bin`，GD32 固件），随 Client 发布包分发，供 DFU 升级使用。
 
 ## 5. WSL 说明
 

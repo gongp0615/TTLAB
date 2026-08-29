@@ -25,7 +25,7 @@ interface DeviceTypeProfile {
 }
 
 function readTvBoxProfile(): DeviceTypeProfile | undefined {
-  const file = process.env.TTLAB_TVBOX_PROFILE ?? './device-types/tv-stick-test-box.json';
+  const file = process.env.TTLAB_TVBOX_PROFILE ?? './device-types/tv-stick-test-box/device.json';
   if (!existsSync(file)) return undefined;
   try {
     return JSON.parse(readFileSync(file, 'utf8')) as DeviceTypeProfile;

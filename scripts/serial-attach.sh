@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # On WSL the USB serial devices connected to the Windows host must first be
 # attached to the WSL distribution with usbipd-win before the TTLAB Client can
 # discover them under /dev. This script reads the device classification
-# directory (device-types/*.json) and attaches only the USB devices whose
+# directory (device-types/*/device.json) and attaches only the USB devices whose
 # VID:PID matches a configured device type, so unrelated peripherals are never
 # touched.
 #
@@ -74,7 +74,7 @@ find_usbipd() {
   return 1
 }
 
-# Loads "vendorId:productId" pairs from device-types/*.json into a newline list.
+# Loads "vendorId:productId" pairs from device-types/*/device.json into a newline list.
 load_known_device_ids() {
   if [[ ! -d "$DEVICE_TYPES_DIR" ]]; then
     warn "device classification directory does not exist: $DEVICE_TYPES_DIR"
@@ -83,7 +83,7 @@ load_known_device_ids() {
   local profile
   local collected=''
   local file
-  for file in "$DEVICE_TYPES_DIR"/*.json; do
+  for file in "$DEVICE_TYPES_DIR"/*/device.json; do
     [[ -f "$file" ]] || continue
     if ! profile="$(python3 -c '
 import json, sys

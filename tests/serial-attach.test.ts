@@ -112,7 +112,8 @@ function makeHarness(): Harness {
   const statePath = join(root, 'attach-state.txt');
   mkdirSync(deviceTypesDir);
   mkdirSync(devDir);
-  writeFileSync(join(deviceTypesDir, 'tv-stick-test-box.json'), deviceTypeProfile);
+  mkdirSync(join(deviceTypesDir, 'tv-stick-test-box'));
+  writeFileSync(join(deviceTypesDir, 'tv-stick-test-box', 'device.json'), deviceTypeProfile);
   writeFileSync(fakeUsbipdPath, fakeUsbipd);
   chmodSync(fakeUsbipdPath, 0o755);
   const baseEnv = {
