@@ -187,8 +187,7 @@ npm run build
 启动 Client：
 
 ```bash
-TTLAB_SERVER_URL=ws://127.0.0.1/agent/v1/session \
-node dist/apps/client/src/index.js
+./scripts/start-client.sh
 ```
 
 Server 默认使用 HTTP/WS 并监听 `80`，不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。

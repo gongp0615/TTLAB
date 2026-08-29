@@ -26,6 +26,14 @@ source ~/.bashrc
 
 该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建，并使用正确的 Node.js 绝对路径通过 `sudo` 启动 Server。Server 配置从仓库根目录的 `server.env` 读取。
 
+本地调试 Client 使用：
+
+```bash
+./scripts/start-client.sh
+```
+
+该脚本运行仓库当前构建结果，不安装 systemd 服务、不复制到 `/opt`，日志直接输出到当前终端。默认连接 `ws://127.0.0.1/agent/v1/session`，状态保存到用户目录；可通过 `TTLAB_SERVER_URL`、`TTLAB_SERIAL_DEVICE_TYPE` 和 `TTLAB_STATE_DIR` 覆盖配置。
+
 ## 2. 部署 Server
 
 项目仓库根目录已经包含 Server 配置文件 `server.env`。clone 后直接编辑；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
