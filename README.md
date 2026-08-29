@@ -182,7 +182,13 @@ npm run build
 
 `init-environment.sh` 按用户身份选择 Node 安装方式：普通用户使用 nvm（安装到 `~/.nvm`）；root 用户自动安装系统级 Node.js 22 到 `/usr/local`（适用于云服务器等 root 登录环境）。root 下执行后无需 `source ~/.bashrc`。
 
-启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`；缺失时自动从 `server.env.example` 复制创建）：
+仓库根目录自带默认配置 `server.env`（clone 后可直接使用）。如需调整端口、公网地址或密钥，直接编辑该文件。为避免本机配置被 git 跟踪，建议执行一次：
+
+```bash
+git update-index --skip-worktree server.env
+```
+
+启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`）：
 
 ```bash
 ./scripts/start-server.sh

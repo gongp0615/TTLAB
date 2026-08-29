@@ -68,7 +68,9 @@ apps/client/src/executor.ts    设备级串口并发锁
 apps/updater/src/index.ts      下载、验签、安装、自检、重启和回滚
 packages/protocol/src/index.ts
                                Server/Client 共享消息信封和数据类型
-device-types/                  设备类型匹配和能力配置
+device-types/                  设备类型匹配和能力配置（每设备一个子目录）
+device-types/tv-stick-test-box/  TV Stick Test Box 设备配置与固件
+device-types/tv-stick-test-box/device.json
 systemd/                       Client 和 Updater 服务单元
 scripts/                       环境初始化、调试启动和生产部署脚本
 docs/                          架构、协议、部署、测试和设备接入文档
@@ -80,14 +82,13 @@ server.env                     Server 默认运行配置
 
 ### 4.1 配置文件
 
-Server 从当前启动目录的 `server.env` 读取配置。`server.env` 已被 git 忽略（含密钥，属本机配置），仓库中提供模板 `server.env.example`：
+Server 从当前启动目录的 `server.env` 读取配置。仓库根目录自带默认 `server.env`（clone 后可直接使用）；按需修改端口、地址和密钥。为避免本机配置被 git 跟踪，建议先执行一次：
 
 ```bash
-cp server.env.example server.env
-# 然后按需修改端口、地址和密钥
+git update-index --skip-worktree server.env
 ```
 
-`server.env.example` 默认配置：
+`server.env` 默认配置：
 
 ```ini
 TTLAB_SERVER_PORT=9000
@@ -292,7 +293,7 @@ ID_USB_INTERFACE_NUM
 设备类型配置位于：
 
 ```text
-device-types/tv-stick-test-box.json
+device-types/tv-stick-test-box/device.json
 ```
 
 当前配置匹配：
@@ -612,7 +613,7 @@ usbipd list
 
 ### 显示 `generic-serial`
 
-确认 Client 已拉取包含 `device-types/tv-stick-test-box.json` 的新版本，并从仓库根目录启动；生产 systemd 版本需要确认 `WorkingDirectory=/opt/ttlab/client/current`。
+确认 Client 已拉取包含 `device-types/tv-stick-test-box/device.json` 的新版本，并从仓库根目录启动；生产 systemd 版本需要确认 `WorkingDirectory=/opt/ttlab/client/current`。
 
 ### 显示 `ambiguous`
 

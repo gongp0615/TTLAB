@@ -49,7 +49,7 @@ source ~/.bashrc
 ./scripts/serial-attach.sh check     # 有串口节点则 exit 0，否则 exit 1
 ```
 
-`attach` 只处理命中 `device-types/*.json`（按 `match[].vendorId:productId` 匹配）且处于 `Shared` 状态的 USB 串口设备，非串口外设和未配置类型的串口不会被触碰。未共享的设备默认只提示手动执行 `usbipd bind --busid=<BUSID>`，设置 `TTLAB_WSL_SERIAL_AUTO_BIND=1` 后可自动 bind。
+`attach` 只处理命中 `device-types/*/device.json`（按 `match[].vendorId:productId` 匹配）且处于 `Shared` 状态的 USB 串口设备，非串口外设和未配置类型的串口不会被触碰。未共享的设备默认只提示手动执行 `usbipd bind --busid=<BUSID>`，设置 `TTLAB_WSL_SERIAL_AUTO_BIND=1` 后可自动 bind。
 
 默认行为受以下环境变量控制：
 
@@ -67,11 +67,16 @@ source ~/.bashrc
 
 ## 2. 部署 Server
 
-项目配置模板为仓库根目录的 `server.env.example`。clone 后复制为本机配置 `server.env`（已被 git 忽略，含密钥）；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
+仓库根目录自带默认配置 `server.env`（clone 后可直接使用）。直接编辑它调整本机配置（可含密钥）；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
 
 ```bash
-cp server.env.example server.env
 sudoedit server.env
+```
+
+为避免本机配置被 git 跟踪，建议先执行一次：
+
+```bash
+git update-index --skip-worktree server.env
 ```
 
 至少确认以下配置：
