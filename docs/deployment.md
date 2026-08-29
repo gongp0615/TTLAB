@@ -11,10 +11,9 @@
 
 ## 2. 部署 Server
 
-先在项目启动目录创建 Server 配置文件。部署前使用项目根目录下的 `server.env`，部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
+项目仓库根目录已经包含 Server 配置文件 `server.env`。clone 后直接编辑；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
 
 ```bash
-cp config/server.env.example server.env
 sudoedit server.env
 ```
 
