@@ -181,9 +181,7 @@ npm run build
 启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`）：
 
 ```bash
-npm install
-npm run build
-sudo npm run start:server
+./scripts/start-server.sh
 ```
 
 启动 Client：

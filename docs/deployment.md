@@ -18,6 +18,14 @@ source ~/.bashrc
 
 脚本会安装并设置 nvm、Node.js 22 和 npm 默认版本。不要使用 `sudo` 运行该初始化脚本。
 
+也可以直接使用一键 Server 启动脚本：
+
+```bash
+./scripts/start-server.sh
+```
+
+该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建，并使用正确的 Node.js 绝对路径通过 `sudo` 启动 Server。Server 配置从仓库根目录的 `server.env` 读取。
+
 ## 2. 部署 Server
 
 项目仓库根目录已经包含 Server 配置文件 `server.env`。clone 后直接编辑；部署完成后会随当前版本放在 `/opt/ttlab/server/current/server.env`：
