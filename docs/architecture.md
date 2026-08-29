@@ -68,9 +68,9 @@ Server 重启期间排队中的指令不会自动恢复或重放。已经在 Cli
 
 ## 5. 安全边界
 
-- 浏览器到 Server 使用 HTTPS/WSS。
-- Client 到 Server 使用 WSS，并使用每 Client 独立证书或等效的可撤销凭据。
-- Client 凭据支持撤销和轮换，禁止硬编码在程序中。
+- 浏览器到 Server 默认使用 HTTP/WS；配置 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 后使用 HTTPS/WSS。
+- Client 到 Server 默认使用 WS；启用 TLS 后使用 WSS。Client Token 认证由 `TTLAB_CLIENT_AUTH_ENABLED` 控制，启用时使用每 Client 独立的可撤销凭据。
+- Client 凭据支持撤销和轮换，禁止硬编码在程序中；认证关闭仅限受控网络联调。
 - 每个设备操作执行 Server 侧 RBAC 检查。
 - 重启、DFU、EDID 写入和原始 AT 命令属于高风险操作，需要更高权限和二次确认。
 

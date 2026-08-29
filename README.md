@@ -72,7 +72,7 @@ Client 运行在目标 Linux 设备上，是 Server 与实际串口硬件之间�
 
 1. Linux 设备启动 Client。
 2. Client 初始化本机串口访问能力。
-3. Client 连接 Server，并完成身份认证和注册。
+3. Client 连接 Server，并完成注册；Client 认证由 `TTLAB_CLIENT_AUTH_ENABLED` 开关控制。
 4. Client 扫描本机串口设备并上报设备信息。
 5. Server 保存设备状态，并在 Web 控制台展示。
 6. 用户通过 Web 控制台选择设备并发起操作。
@@ -100,7 +100,7 @@ Client 启动后自动完成连接、注册和设备发现，减少人工配置�
 
 ### 安全接入
 
-Server 应对 Client 进行身份认证，并对用户操作进行权限控制。涉及设备控制的操作需要保留完整审计记录。
+Server 支持 Client 身份认证和用户权限控制。当前为简化联调流程，Client 认证默认关闭；生产环境恢复认证后，涉及设备控制的操作需要保留完整审计记录。
 
 ### 可扩展性
 
@@ -176,24 +176,20 @@ npm test
 npm run build
 ```
 
-启动 Server：
+启动 Server（HTTP/WS，默认读取当前启动目录的 `server.env`）：
 
 ```bash
-TTLAB_SERVER_PORT=8080 \
-TTLAB_CLIENT_TOKENS='client-001=replace-with-secret' \
-node dist/apps/server/src/index.js
+sudo node dist/apps/server/src/index.js
 ```
 
 启动 Client：
 
 ```bash
-TTLAB_SERVER_URL=ws://127.0.0.1:8080/agent/v1/session \
-TTLAB_CLIENT_ID=client-001 \
-TTLAB_CLIENT_TOKEN=replace-with-secret \
+TTLAB_SERVER_URL=ws://127.0.0.1/agent/v1/session \
 node dist/apps/client/src/index.js
 ```
 
-生产部署必须使用 HTTPS/WSS、真实的每 Client 独立凭据、签名更新包和 systemd 服务文件；环境变量中的示例 Token 仅用于本地联调，不能用于生产。
+Server 默认使用 HTTP/WS 并监听 `80`，不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。
 
 ### 一键部署
 

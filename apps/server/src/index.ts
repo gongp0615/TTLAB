@@ -1,9 +1,13 @@
 import { createReadStream, existsSync, readFileSync } from 'node:fs';
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   message,
+  parseClientHello,
+  parseClientSnapshot,
+  parseCommandResult,
   parseEnvelope,
   type ClientHello,
   type ClientSnapshot,
@@ -12,11 +16,35 @@ import {
   type UpdateManifest,
 } from '../../../packages/protocol/src/index.js';
 
-const port = Number(process.env.TTLAB_SERVER_PORT ?? 8080);
+function loadConfigFile(file: string): void {
+  if (!existsSync(file)) return;
+  for (const rawLine of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator).trim();
+    let value = line.slice(separator + 1).trim();
+    if (!/^TTLAB_[A-Z0-9_]+$/.test(key)) continue;
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadConfigFile(process.env.TTLAB_CONFIG_FILE ?? './server.env');
+
+const port = Number(process.env.TTLAB_SERVER_PORT ?? 80);
 const heartbeatTimeoutMs = Number(process.env.TTLAB_HEARTBEAT_TIMEOUT_MS ?? 30_000);
 const configuredTokens = parseTokens(process.env.TTLAB_CLIENT_TOKENS ?? '');
+const clientAuthEnabled = process.env.TTLAB_CLIENT_AUTH_ENABLED === '1';
 const releaseDirectory = process.env.TTLAB_RELEASE_DIR ?? './releases';
-const publicBaseUrl = process.env.TTLAB_PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}`;
+const tlsKeyFile = process.env.TTLAB_TLS_KEY_FILE;
+const tlsCertFile = process.env.TTLAB_TLS_CERT_FILE;
+const tlsRequired = process.env.TTLAB_TLS_REQUIRED === '1';
+if ((tlsKeyFile && !tlsCertFile) || (!tlsKeyFile && tlsCertFile)) throw new Error('TTLAB_TLS_KEY_FILE and TTLAB_TLS_CERT_FILE must be configured together');
+if (tlsRequired && (!tlsKeyFile || !tlsCertFile)) throw new Error('TLS is required but certificate files are not configured');
+const tlsEnabled = Boolean(tlsKeyFile && tlsCertFile);
+const publicBaseUrl = process.env.TTLAB_PUBLIC_BASE_URL ?? `${tlsEnabled ? 'https' : 'http'}://127.0.0.1:${port}`;
 const webRoot = process.env.TTLAB_WEB_ROOT ?? '.';
 const supportedOperations = new Set([
   'hdmi.switch', 'hdmi.status', 'usb.path', 'usb.status', 'system.ping', 'system.version',
@@ -34,7 +62,7 @@ interface RuntimeClient {
 }
 
 const clients = new Map<string, RuntimeClient>();
-const commands = new Map<string, { request: CommandRequest; status: string; createdAt: string }>();
+const commands = new Map<string, { request: CommandRequest; status: string; createdAt: string; result?: unknown }>();
 const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 const webEventServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 const staticFiles: Record<string, { file: string; contentType: string }> = {
@@ -99,7 +127,11 @@ function broadcastState(client: RuntimeClient): void {
   }
 }
 
-const httpServer = createServer(async (request, response) => {
+const httpServer = tlsEnabled
+  ? createHttpsServer({ key: readFileSync(tlsKeyFile as string), cert: readFileSync(tlsCertFile as string) }, requestHandler)
+  : createHttpServer(requestHandler);
+
+async function requestHandler(request: IncomingMessage, response: import('node:http').ServerResponse): Promise<void> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   try {
     const staticFile = request.method === 'GET' ? staticFiles[url.pathname] : undefined;
@@ -134,7 +166,7 @@ const httpServer = createServer(async (request, response) => {
       const artifactPath = `${releaseDirectory}/${version}/${artifact}`;
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
       const clientId = url.searchParams.get('clientId');
-      if (!isSafeSegment(artifact) || !manifest || !existsSync(artifactPath) || manifest.artifact !== artifact || !clientId || configuredTokens.get(clientId) !== token) {
+      if (!isSafeSegment(artifact) || !manifest || !existsSync(artifactPath) || manifest.artifact !== artifact || !clientId || (clientAuthEnabled && configuredTokens.get(clientId) !== token)) {
         json(response, 404, { error: { code: 'RELEASE_NOT_FOUND', message: 'release not found', retryable: false } });
         return;
       }
@@ -181,6 +213,17 @@ const httpServer = createServer(async (request, response) => {
       json(response, 202, { data: { commandId: command.commandId, status: 'dispatched' } });
       return;
     }
+    const commandStatusMatch = url.pathname.match(/^\/api\/v1\/commands\/([^/]+)$/);
+    if (request.method === 'GET' && commandStatusMatch) {
+      const commandId = decodeURIComponent(commandStatusMatch[1] ?? '');
+      const command = commands.get(commandId);
+      if (!command) {
+        json(response, 404, { error: { code: 'COMMAND_NOT_FOUND', message: 'command not found', retryable: false } });
+        return;
+      }
+      json(response, 200, { data: { commandId, status: command.status, createdAt: command.createdAt, result: command.result } });
+      return;
+    }
     const updateMatch = url.pathname.match(/^\/api\/v1\/clients\/([^/]+)\/update$/);
     if (request.method === 'POST' && updateMatch) {
       const clientId = decodeURIComponent(updateMatch[1] ?? '');
@@ -213,7 +256,7 @@ const httpServer = createServer(async (request, response) => {
   } catch (error) {
     json(response, 400, { error: { code: 'INVALID_REQUEST', message: error instanceof Error ? error.message : 'invalid request', retryable: false } });
   }
-});
+}
 
 httpServer.on('upgrade', (request, socket, head) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
@@ -235,16 +278,16 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
     try {
       const envelope = parseEnvelope(data.toString()) as Envelope;
       if (envelope.type === 'client.hello') {
-        const hello = envelope.payload as ClientHello;
+        const hello = parseClientHello(envelope.payload);
         const clientId = envelope.clientId;
-        if (!clientId || !configuredTokens.has(clientId) || configuredTokens.get(clientId) !== token) {
+        if (!clientId || (clientAuthEnabled && (!configuredTokens.has(clientId) || configuredTokens.get(clientId) !== token))) {
           socket.close(1008, 'client authentication failed');
           return;
         }
         boundClientId = clientId;
         const previous = clients.get(clientId);
         previous?.socket?.close(4001, 'replaced by newer connection');
-        const runtime: RuntimeClient = { clientId, status: 'syncing', socket, hello, connectedAt: new Date().toISOString() };
+        const runtime: RuntimeClient = { clientId, status: 'syncing', socket, hello, connectedAt: new Date().toISOString(), lastHeartbeatAt: new Date().toISOString() };
         clients.set(clientId, runtime);
         socket.send(JSON.stringify(message('sync.request', { reason: 'connection_established' }, clientId, envelope.id)));
         return;
@@ -253,7 +296,9 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
       const runtime = clients.get(boundClientId);
       if (!runtime || runtime.socket !== socket) throw new Error('stale client connection');
       if (envelope.type === 'client.snapshot') {
-        runtime.snapshot = envelope.payload as ClientSnapshot;
+        const nextSnapshot = parseClientSnapshot(envelope.payload);
+        if (runtime.snapshot && runtime.snapshot.bootId === nextSnapshot.bootId && nextSnapshot.snapshotRevision <= runtime.snapshot.snapshotRevision) return;
+        runtime.snapshot = nextSnapshot;
         runtime.status = 'online';
         runtime.lastHeartbeatAt = new Date().toISOString();
         broadcastState(runtime);
@@ -262,7 +307,10 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
       } else if (envelope.type === 'command.accepted' || envelope.type === 'command.progress' || envelope.type === 'command.result' || envelope.type === 'command.failed') {
         const payload = envelope.payload as { commandId?: string };
         const command = payload.commandId ? commands.get(payload.commandId) : undefined;
-        if (command) command.status = envelope.type.slice('command.'.length);
+        if (command) {
+          command.status = envelope.type.slice('command.'.length);
+          if (envelope.type === 'command.result' || envelope.type === 'command.failed') command.result = parseCommandResult(envelope.payload);
+        }
         if (runtime.snapshot) broadcastState(runtime);
       }
     } catch (error) {
@@ -296,7 +344,7 @@ setInterval(() => {
   }
 }, Math.max(1000, Math.floor(heartbeatTimeoutMs / 2))).unref();
 
-httpServer.listen(port, () => console.log(JSON.stringify({ event: 'server_started', port })));
+httpServer.listen(port, () => console.log(JSON.stringify({ event: 'server_started', port, tls: tlsEnabled })));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {

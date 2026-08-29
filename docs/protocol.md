@@ -2,9 +2,9 @@
 
 ## 1. 传输方式
 
-- Web API：HTTPS REST，路径统一使用 `/api/v1`。
-- Web 实时事件：Server WebSocket `/api/v1/events`。
-- Client 通信：Client 主动建立 WSS `/agent/v1/session`。
+- Web API：HTTP REST，路径统一使用 `/api/v1`；启用 TLS 后使用 HTTPS。
+- Web 实时事件：Server WebSocket `/api/v1/events`，启用 TLS 后使用 WSS。
+- Client 通信：Client 主动建立 WS `/agent/v1/session`，启用 TLS 后使用 WSS。
 - 消息编码：UTF-8 JSON。
 - 每条消息必须符合版本化 Schema；未知字段必须忽略，未知消息类型返回协议错误。
 

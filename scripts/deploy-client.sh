@@ -11,6 +11,7 @@ UPDATE_PUBLIC_KEY_FILE="${TTLAB_UPDATE_PUBLIC_KEY_FILE:-/etc/ttlab/update-public
 SERVER_URL="${TTLAB_SERVER_URL:-}"
 CLIENT_ID="${TTLAB_CLIENT_ID:-}"
 CLIENT_TOKEN="${TTLAB_CLIENT_TOKEN:-}"
+CLIENT_AUTH_ENABLED="${TTLAB_CLIENT_AUTH_ENABLED:-0}"
 SERIAL_DEVICE_TYPE="${TTLAB_SERIAL_DEVICE_TYPE:-generic-serial}"
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
@@ -28,10 +29,20 @@ trap cleanup EXIT
 [[ -n "$NPM_BIN" ]] || fail 'npm is required'
 [[ "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'TTLAB_VERSION contains unsafe characters'
 [[ -n "$SERVER_URL" ]] || fail 'TTLAB_SERVER_URL is required'
-[[ -n "$CLIENT_ID" ]] || fail 'TTLAB_CLIENT_ID is required'
-[[ -n "$CLIENT_TOKEN" ]] || fail 'TTLAB_CLIENT_TOKEN is required'
-[[ "$CLIENT_TOKEN" != *$'\n'* && "$CLIENT_TOKEN" != *$'\r'* ]] || fail 'TTLAB_CLIENT_TOKEN must not contain newlines'
-[[ "$CLIENT_TOKEN" =~ ^[A-Za-z0-9._~+=-]+$ ]] || fail 'TTLAB_CLIENT_TOKEN contains characters that are unsafe in a systemd EnvironmentFile'
+[[ "$SERVER_URL" == ws://* || "$SERVER_URL" == wss://* ]] || fail 'TTLAB_SERVER_URL must use ws:// or wss://'
+[[ "$CLIENT_AUTH_ENABLED" == 0 || "$CLIENT_AUTH_ENABLED" == 1 ]] || fail 'TTLAB_CLIENT_AUTH_ENABLED must be 0 or 1'
+if [[ "$CLIENT_AUTH_ENABLED" == 1 ]]; then
+  [[ -n "$CLIENT_ID" ]] || fail 'TTLAB_CLIENT_ID is required when client authentication is enabled'
+  [[ -n "$CLIENT_TOKEN" ]] || fail 'TTLAB_CLIENT_TOKEN is required when client authentication is enabled'
+fi
+if [[ -n "$CLIENT_TOKEN" ]]; then
+  [[ "$CLIENT_TOKEN" != *$'\n'* && "$CLIENT_TOKEN" != *$'\r'* ]] || fail 'TTLAB_CLIENT_TOKEN must not contain newlines'
+  [[ "$CLIENT_TOKEN" =~ ^[A-Za-z0-9._~+=-]+$ ]] || fail 'TTLAB_CLIENT_TOKEN contains characters that are unsafe in a systemd EnvironmentFile'
+fi
+if [[ -n "$CLIENT_ID" ]]; then
+  [[ "$CLIENT_ID" != *$'\n'* && "$CLIENT_ID" != *$'\r'* ]] || fail 'TTLAB_CLIENT_ID must not contain newlines'
+  [[ "$CLIENT_ID" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'TTLAB_CLIENT_ID contains unsafe characters'
+fi
 [[ "$SERIAL_DEVICE_TYPE" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'TTLAB_SERIAL_DEVICE_TYPE contains unsafe characters'
 [[ -f "$UPDATE_PUBLIC_KEY_FILE" ]] || fail "update public key file does not exist: $UPDATE_PUBLIC_KEY_FILE"
 
@@ -100,6 +111,7 @@ printf '%s\n' \
   "TTLAB_SERVER_URL=$SERVER_URL" \
   "TTLAB_CLIENT_ID=$CLIENT_ID" \
   "TTLAB_CLIENT_TOKEN=$CLIENT_TOKEN" \
+  "TTLAB_CLIENT_AUTH_ENABLED=$CLIENT_AUTH_ENABLED" \
   "TTLAB_STATE_DIR=/var/lib/ttlab-client" \
   "TTLAB_UPDATER_SOCKET=/run/ttlab-updater/update.sock" \
   "TTLAB_SERIAL_DEVICE_TYPE=$SERIAL_DEVICE_TYPE" > "$ENV_TMP"
