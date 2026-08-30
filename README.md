@@ -203,6 +203,12 @@ git update-index --skip-worktree server.env
 ./scripts/start-client.sh
 ```
 
+重启 Client（若已部署为 systemd 服务则通过 `systemctl restart ttlab-client`，否则停止并重启前台调试进程）：
+
+```bash
+./scripts/restart-client.sh
+```
+
 Server 默认使用 HTTP/WS 并监听 `9000`（非特权端口，直接以当前用户运行，无需 root；仅配置 <1024 端口时需 sudo），不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。生产部署的 Server systemd 服务以低权用户 `ttlab-server` 运行。
 
 ### 一键部署
