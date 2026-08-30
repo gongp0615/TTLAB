@@ -153,7 +153,8 @@ export interface FirmwareManifest {
   artifact: string;
   sha256: string;
   size: number;
-  deviceType: string;
+  /** 该固件兼容的设备分类（deviceTypes）；单个固件文件可对应多个分类 */
+  deviceTypes: string[];
   releasedAt: string;
   description?: string;
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -54,17 +54,48 @@ test('FirmwareStore publishes, reads and lists firmware releases', async () => {
   try {
     const store = new FirmwareStore({ directory: root });
     const payload = Buffer.from('GD32 firmware payload');
-    const manifest = await store.publish({ version: 'V39', artifact: 'Panda_COM-V39-release.bin', deviceType: 'tv-stick-test-box', description: 'release', body: bodySource(payload) });
+    const manifest = await store.publish({ version: 'V39', artifact: 'Panda_COM-V39-release.bin', deviceTypes: ['tv-stick-test-box'], description: 'release', body: bodySource(payload) });
     assert.equal(manifest.version, 'V39');
     assert.equal(manifest.artifact, 'Panda_COM-V39-release.bin');
     assert.equal(manifest.size, payload.length);
     assert.equal(manifest.sha256.length, 64);
-    assert.equal(manifest.deviceType, 'tv-stick-test-box');
+    assert.deepEqual(manifest.deviceTypes, ['tv-stick-test-box']);
 
     const read = store.read('V39');
     assert.equal(read?.sha256, manifest.sha256);
+    assert.deepEqual(read?.deviceTypes, ['tv-stick-test-box']);
     assert.equal(readFileSync(store.artifactPath('V39', 'Panda_COM-V39-release.bin') as string, 'utf8'), payload.toString('utf8'));
     assert.deepEqual(store.list().map((item) => item.version), ['V39']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('FirmwareStore supports multiple device types per release', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-fw-unit-'));
+  try {
+    const store = new FirmwareStore({ directory: root });
+    const manifest = await store.publish({ version: 'V40', artifact: 'multi.bin', deviceTypes: ['tv-stick-test-box', 'another-box'], body: bodySource('x') });
+    assert.deepEqual(manifest.deviceTypes, ['tv-stick-test-box', 'another-box']);
+    assert.deepEqual(store.read('V40')?.deviceTypes, ['tv-stick-test-box', 'another-box']);
+    // 重复项会被去重
+    const dedup = await store.publish({ version: 'V41', artifact: 'dedup.bin', deviceTypes: ['a', 'a', 'b'], body: bodySource('y') });
+    assert.deepEqual(dedup.deviceTypes, ['a', 'b']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('FirmwareStore normalizes legacy single deviceType manifests on read', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-fw-unit-'));
+  try {
+    const store = new FirmwareStore({ directory: root });
+    const legacy: Record<string, unknown> = { version: 'LEGACY', artifact: 'legacy.bin', sha256: 'a'.repeat(64), size: 4, deviceType: 'tv-stick-test-box', releasedAt: new Date().toISOString() };
+    mkdirSync(join(root, 'firmware', 'LEGACY'), { recursive: true });
+    writeFileSync(join(root, 'firmware', 'LEGACY', 'manifest.json'), JSON.stringify(legacy));
+    const manifest = store.read('LEGACY');
+    assert.equal(manifest?.version, 'LEGACY');
+    assert.deepEqual(manifest?.deviceTypes, ['tv-stick-test-box']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -98,6 +129,7 @@ test('Server firmware upload, list, download and flash dispatch work end to end'
     assert.equal(uploadResponse.status, 201);
     const uploaded = (await uploadResponse.json()).data;
     assert.equal(uploaded.sha256.length, 64);
+    assert.deepEqual(uploaded.deviceTypes, ['tv-stick-test-box']);
 
     // duplicate upload is rejected
     const duplicate = await fetch(`http://127.0.0.1:${port}/api/v1/firmware/releases/V39?artifact=Panda_COM-V39-release.bin`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: payload });
@@ -109,6 +141,7 @@ test('Server firmware upload, list, download and flash dispatch work end to end'
     const listed = (await listResponse.json()).data;
     assert.equal(listed.length, 1);
     assert.equal(listed[0].version, 'V39');
+    assert.deepEqual(listed[0].deviceTypes, ['tv-stick-test-box']);
 
     // bring a client online so firmware.flash can be dispatched
     const socket = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
@@ -146,6 +179,67 @@ test('Server firmware upload, list, download and flash dispatch work end to end'
     socket.send(JSON.stringify(message('command.result', { commandId, deviceId: 'tvbox:fw', success: true, output: 'flashed V39' }, 'client-fw', execute.id)));
     const done = await fetch(`http://127.0.0.1:${port}/api/v1/commands/${commandId}`);
     assert.equal((await done.json()).data.status, 'result');
+  } finally {
+    for (const socket of sockets) socket.close();
+    child.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Server firmware supports multiple device types, lists categories and rejects mismatched flashes', async () => {
+  const port = await freePort();
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-fw-srv-'));
+  const deviceTypesDir = join(root, 'device-types');
+  mkdirSync(join(deviceTypesDir, 'tv-stick-test-box'), { recursive: true });
+  writeFileSync(join(deviceTypesDir, 'tv-stick-test-box', 'device.json'), JSON.stringify({ type: 'tv-stick-test-box', displayName: 'TV Stick Test Box' }));
+  const child = spawn(process.execPath, ['dist/apps/server/src/index.js'], { cwd: process.cwd(), env: { ...process.env, TTLAB_SERVER_PORT: String(port), TTLAB_HEARTBEAT_TIMEOUT_MS: '500', TTLAB_WEB_ROOT: process.cwd(), TTLAB_LOG_DIR: join(root, 'logs'), TTLAB_RELEASE_DIR: join(root, 'releases'), TTLAB_DEVICE_TYPES_DIR: deviceTypesDir, TTLAB_PUBLIC_BASE_URL: `http://127.0.0.1:${port}` }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const sockets: WebSocket[] = [];
+  try {
+    await waitForOutput(child, (line) => line.includes('server_started'));
+    const payload = Buffer.from('fake-gd32-firmware-binary');
+
+    // device types are listed from the static device-types directory
+    const deviceTypesResponse = await fetch(`http://127.0.0.1:${port}/api/v1/device-types`);
+    assert.equal(deviceTypesResponse.status, 200);
+    const deviceTypes = (await deviceTypesResponse.json()).data as Array<{ type: string; displayName: string }>;
+    assert.ok(deviceTypes.some((item) => item.type === 'tv-stick-test-box' && item.displayName === 'TV Stick Test Box'));
+
+    // upload a firmware release tagged for two device types
+    const uploadResponse = await fetch(`http://127.0.0.1:${port}/api/v1/firmware/releases/V50?artifact=multi.bin&deviceType=tv-stick-test-box&deviceType=acme-box&description=multi`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: payload });
+    assert.equal(uploadResponse.status, 201);
+    const uploaded = (await uploadResponse.json()).data;
+    assert.deepEqual(uploaded.deviceTypes, ['tv-stick-test-box', 'acme-box']);
+
+    // an unsafe device type is rejected
+    const invalid = await fetch(`http://127.0.0.1:${port}/api/v1/firmware/releases/V51?artifact=bad.bin&deviceType=../evil`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: payload });
+    assert.equal(invalid.status, 400);
+
+    // bring a client online with an 'acme-box' managed device
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(socket);
+    await once(socket, 'open');
+    const syncPromise = waitForMessage(socket, (value) => value.type === 'sync.request');
+    socket.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId: 'boot-multi', platform: 'linux', architecture: 'amd64', capabilities: ['serial', 'firmware-flash'] }, 'client-multi')));
+    await syncPromise;
+    const serialPort = { deviceId: 'serial:multi', path: '/dev/ttyACM0', stableIdentity: true, status: 'available' as const, portRole: 'control' as const, observedAt: new Date().toISOString() };
+    const operations: DeviceOperation[] = [{ operation: 'firmware.flash', displayName: '固件刷写', command: '', parameters: [{ name: 'version', type: 'string' }, { name: 'artifact', type: 'string' }] }];
+    const managed: ManagedDevice = { deviceId: 'tvbox:acme', deviceType: 'acme-box', displayName: 'Acme Box', stableIdentity: 'acme-1', status: 'identified', ports: [serialPort], capabilities: ['firmware-flash'], operations, observedAt: serialPort.observedAt };
+    socket.send(JSON.stringify(message('client.snapshot', { snapshotRevision: 1, clientVersion: 'test', bootId: 'boot-multi', health: 'healthy', devices: [serialPort], managedDevices: [managed] }, 'client-multi')));
+
+    // the device-types endpoint also includes categories reported by online devices
+    const refreshed = (await (await fetch(`http://127.0.0.1:${port}/api/v1/device-types`)).json()).data as Array<{ type: string; displayName: string }>;
+    assert.ok(refreshed.some((item) => item.type === 'acme-box'));
+
+    // a device covered by one of the firmware's device types can flash it
+    const matched = await fetch(`http://127.0.0.1:${port}/api/v1/clients/client-multi/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: 'tvbox:acme', operation: 'firmware.flash', parameters: { version: 'V50', artifact: 'multi.bin' } }) });
+    assert.equal(matched.status, 202);
+
+    // a device whose type is not covered by the firmware is rejected
+    const other: ManagedDevice = { ...managed, deviceId: 'tvbox:other', deviceType: 'other-box', stableIdentity: 'other-1' };
+    socket.send(JSON.stringify(message('client.snapshot', { snapshotRevision: 2, clientVersion: 'test', bootId: 'boot-multi', health: 'healthy', devices: [serialPort], managedDevices: [other] }, 'client-multi')));
+    const mismatched = await fetch(`http://127.0.0.1:${port}/api/v1/clients/client-multi/commands`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: 'tvbox:other', operation: 'firmware.flash', parameters: { version: 'V50', artifact: 'multi.bin' } }) });
+    assert.equal(mismatched.status, 400);
+    assert.match(JSON.stringify(await mismatched.json()), /does not match the device type/);
   } finally {
     for (const socket of sockets) socket.close();
     child.kill();

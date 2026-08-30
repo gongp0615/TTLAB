@@ -164,10 +164,11 @@ Client 使用 `update.progress`、`update.completed` 或 `update.failed` 报告�
 
 ## 5.1 固件管理 API
 
-固件镜像由 Server 统一管理，存储于 `<TTLAB_RELEASE_DIR>/firmware/<version>/`（与 Client 发布包目录 `releases/<version>/` 隔离）。
+固件镜像由 Server 统一管理，存储于 `<TTLAB_RELEASE_DIR>/firmware/<version>/`（与 Client 发布包目录 `releases/<version>/` 隔离）。一个固件文件可关联一个或多个设备分类（`deviceTypes`），刷写时目标设备的分类必须命中其中至少一个。
 
-- `POST /api/v1/firmware/releases/:version?artifact=<name>&description=<urlencoded>&deviceType=<type>`：上传固件，body 为原始二进制（`application/octet-stream`）。已存在返回 409，超限返回 413。
-- `GET /api/v1/firmware/releases`：固件列表 `[{version, artifact, sha256, size, deviceType, releasedAt, description}]`。
+- `POST /api/v1/firmware/releases/:version?artifact=<name>&description=<urlencoded>&deviceType=<type>`：上传固件，body 为原始二进制（`application/octet-stream`）。`deviceType` 可重复传多个值（如 `&deviceType=tv-stick-test-box&deviceType=acme-box`）以关联多个设备分类，未传时默认 `tv-stick-test-box`。已存在返回 409，超限返回 413。
+- `GET /api/v1/firmware/releases`：固件列表 `[{version, artifact, sha256, size, deviceTypes, releasedAt, description}]`。
+- `GET /api/v1/device-types`：设备分类列表 `[{type, displayName}]`，来源为 `TTLAB_DEVICE_TYPES_DIR`（默认 `<webRoot>/device-types`）下的 `*/device.json`，并合并当前在线 Client 上报的设备分类。
 - `GET /agent/v1/releases/:version/:artifact?clientId=<id>`：固件下载，与 Client 发布包下载共用端点，先查 firmware 目录再回退 release 目录；需要 clientId（开启认证时还需 Bearer token）。
 
 固件下载引用由 Server 在 `firmware.flash` 指令中构造，Client 校验 SHA-256 后进入 DFU 刷写。

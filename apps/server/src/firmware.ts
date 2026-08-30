@@ -22,7 +22,7 @@ export interface FirmwareStoreOptions {
 export interface PublishInput {
   version: string;
   artifact: string;
-  deviceType?: string;
+  deviceTypes?: string[];
   description?: string;
   body: AsyncIterable<Buffer | Uint8Array | string>;
 }
@@ -46,15 +46,25 @@ export class FirmwareStore {
     if (!existsSync(manifestPath)) return undefined;
     let value: unknown;
     try {
-      value = JSON.parse(readFileSync(manifestPath, 'utf8')) as FirmwareManifest;
+      value = JSON.parse(readFileSync(manifestPath, 'utf8'));
     } catch {
       return undefined;
     }
-    const manifest = value as FirmwareManifest;
-    if (manifest.version !== version || !safeSegmentPattern.test(manifest.artifact) || !sha256Pattern.test(manifest.sha256) || typeof manifest.size !== 'number' || typeof manifest.deviceType !== 'string') {
+    const manifest = value as FirmwareManifest & { deviceType?: string };
+    // 兼容旧版 manifest：仅有单值 deviceType 时归一化为 deviceTypes 数组
+    const deviceTypes = manifest.deviceTypes ?? (manifest.deviceType !== undefined ? [manifest.deviceType] : undefined);
+    if (
+      manifest.version !== version
+      || !safeSegmentPattern.test(manifest.artifact)
+      || !sha256Pattern.test(manifest.sha256)
+      || typeof manifest.size !== 'number'
+      || !Array.isArray(deviceTypes)
+      || deviceTypes.length === 0
+      || !deviceTypes.every((item) => typeof item === 'string' && safeSegmentPattern.test(item))
+    ) {
       throw new FirmwareStoreError('INVALID_MANIFEST', `invalid firmware manifest for ${version}`);
     }
-    return manifest;
+    return { ...manifest, deviceTypes: [...new Set(deviceTypes)] };
   }
 
   list(): FirmwareManifest[] {
@@ -88,6 +98,11 @@ export class FirmwareStore {
     const { version, artifact } = input;
     if (!safeSegmentPattern.test(version)) throw new FirmwareStoreError('INVALID_ARGUMENT', 'invalid firmware version', false);
     if (!safeSegmentPattern.test(artifact)) throw new FirmwareStoreError('INVALID_ARGUMENT', 'invalid artifact name', false);
+    const deviceTypes = input.deviceTypes && input.deviceTypes.length > 0 ? [...new Set(input.deviceTypes)] : ['tv-stick-test-box'];
+    const invalidDeviceType = deviceTypes.find((item) => typeof item !== 'string' || !safeSegmentPattern.test(item));
+    if (invalidDeviceType !== undefined) {
+      throw new FirmwareStoreError('INVALID_ARGUMENT', `invalid device type "${invalidDeviceType}"`, false);
+    }
     if (this.exists(version)) throw new FirmwareStoreError('ALREADY_EXISTS', `firmware release ${version} already exists`, false);
     const targetDirectory = join(this.firmwareRoot, version);
     mkdirSync(targetDirectory, { recursive: true });
@@ -113,7 +128,7 @@ export class FirmwareStore {
         artifact,
         sha256: hash.digest('hex'),
         size,
-        deviceType: input.deviceType ?? 'tv-stick-test-box',
+        deviceTypes,
         releasedAt: new Date().toISOString(),
         ...(input.description !== undefined ? { description: input.description } : {}),
       };

@@ -143,4 +143,5 @@ svg { stroke-width: 1.8; }
 .firmware-table td:last-child { white-space: normal; }
 .firmware-table tr:last-child td { border-bottom: 0; }
 .firmware-table .fw-sha { color: var(--muted-2); font-family: 'DM Mono', monospace; font-size: 9px; }
+.device-type-field { min-width: 0; margin: 0; padding: 0; border: 0; }.device-type-field legend { padding: 0; }.device-type-options { display: flex; flex-wrap: wrap; gap: 8px; }.device-type-option { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink-soft); font-size: 11px; cursor: pointer; }.device-type-option:hover { border-color: var(--blue); }.device-type-option input[type="checkbox"] { width: 14px; height: 14px; margin: 0; accent-color: var(--blue); cursor: pointer; }.device-type-option.checked { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }.device-type-empty { padding: 6px 0; }
 .settings-field input[type="file"] { font-size: 11px; color: var(--ink-soft); }

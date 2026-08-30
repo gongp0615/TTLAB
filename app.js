@@ -195,15 +195,17 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="command-field"><label>固件文件 *</label><input name="artifact" id="firmwareArtifactInput" type="text" readonly required /></div>`;
       const versionSelect = document.querySelector('#firmwareVersionSelect');
       const artifactInput = document.querySelector('#firmwareArtifactInput');
+      const compatible = (releases) => releases.filter((item) => (item.deviceTypes ?? []).includes(device.deviceType));
       const populate = (releases) => {
-        versionSelect.innerHTML = releases.length ? releases.map((item) => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)} · ${escapeHtml(item.artifact)}</option>`).join('') : '<option value="">暂无固件，请先到系统设置上传</option>';
-        const selected = releases.find((item) => item.version === versionSelect.value);
+        const matches = compatible(releases);
+        versionSelect.innerHTML = matches.length ? matches.map((item) => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)} · ${escapeHtml(item.artifact)}</option>`).join('') : '<option value="">暂无匹配该设备分类的固件</option>';
+        const selected = matches.find((item) => item.version === versionSelect.value);
         artifactInput.value = selected?.artifact ?? '';
       };
       populate(firmwareReleases);
       void fetch('/api/v1/firmware/releases').then((response) => response.json()).then((body) => { firmwareReleases = body.data ?? []; populate(firmwareReleases); }).catch(() => { versionSelect.innerHTML = '<option value="">固件列表加载失败</option>'; });
       versionSelect.addEventListener('change', () => {
-        const selected = firmwareReleases.find((item) => item.version === versionSelect.value);
+        const selected = compatible(firmwareReleases).find((item) => item.version === versionSelect.value);
         artifactInput.value = selected?.artifact ?? '';
       });
     } else {
@@ -305,8 +307,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const dashboardWrap = document.querySelector('.content-wrap');
   const settingsPage = document.querySelector('#settingsPage');
-  const showDashboard = () => { dashboardWrap.hidden = false; settingsPage.hidden = true; };
-  const showSettingsPage = () => { dashboardWrap.hidden = true; settingsPage.hidden = false; void loadAgentSettings(); };
+  const firmwarePage = document.querySelector('#firmwarePage');
+  const showDashboard = () => { dashboardWrap.hidden = false; settingsPage.hidden = true; firmwarePage.hidden = true; };
+  const showSettingsPage = () => { dashboardWrap.hidden = true; settingsPage.hidden = false; firmwarePage.hidden = true; void loadAgentSettings(); };
+  const showFirmwarePage = () => { dashboardWrap.hidden = true; settingsPage.hidden = true; firmwarePage.hidden = false; void loadFirmwareReleases(); void loadDeviceTypes(); };
 
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach((nav) => nav.classList.remove('active'));
@@ -315,6 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#breadcrumbPage').textContent = page;
     if (page === '概览') showDashboard();
     else if (page === '智能体') openAgentPanel();
+    else if (page === '固件管理') showFirmwarePage();
     else if (page === '系统设置') showSettingsPage();
     else showToast(`页面“${page}”将在设备管理模块中开放`);
   }));
@@ -610,11 +615,36 @@ document.addEventListener('DOMContentLoaded', () => {
   const firmwareForm = document.querySelector('#firmwareUploadForm');
   const firmwareStatus = document.querySelector('#firmwareStatus');
   const firmwareTableBody = document.querySelector('#firmwareTableBody');
+  const firmwareDeviceTypes = document.querySelector('#firmwareDeviceTypes');
   const setFirmwareStatus = (message, kind) => {
     firmwareStatus.textContent = message;
     firmwareStatus.className = `settings-status${kind ? ` ${kind}` : ''}`;
   };
   let firmwareReleases = [];
+  let deviceTypeOptions = [];
+
+  const renderDeviceTypeOptions = () => {
+    if (!deviceTypeOptions.length) {
+      firmwareDeviceTypes.innerHTML = '<span class="empty-state device-type-empty">暂无可用设备分类</span>';
+      return;
+    }
+    firmwareDeviceTypes.innerHTML = deviceTypeOptions.map((option) => `<label class="device-type-option"><input type="checkbox" name="deviceTypes" value="${escapeHtml(option.type)}" />${escapeHtml(option.displayName)}</label>`).join('');
+    firmwareDeviceTypes.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+      box.addEventListener('change', () => box.closest('.device-type-option')?.classList.toggle('checked', box.checked));
+    });
+  };
+
+  const loadDeviceTypes = async () => {
+    try {
+      const response = await fetch('/api/v1/device-types');
+      if (!response.ok) throw new Error('无法读取设备分类');
+      deviceTypeOptions = (await response.json()).data ?? [];
+      renderDeviceTypeOptions();
+    } catch (error) {
+      firmwareDeviceTypes.innerHTML = `<span class="empty-state device-type-empty">${escapeHtml(error instanceof Error ? error.message : '设备分类加载失败')}</span>`;
+      setFirmwareStatus(error instanceof Error ? error.message : '加载设备分类失败', 'error');
+    }
+  };
 
   const loadFirmwareReleases = async () => {
     try {
@@ -622,10 +652,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!response.ok) throw new Error('无法读取固件列表');
       firmwareReleases = (await response.json()).data ?? [];
       firmwareTableBody.innerHTML = firmwareReleases.length
-        ? firmwareReleases.map((item) => `<tr><td>${escapeHtml(item.version)}</td><td>${escapeHtml(item.artifact)}</td><td>${item.size} B</td><td class="fw-sha" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256.slice(0, 16))}…</td><td>${escapeHtml((item.releasedAt ?? '').slice(0, 19).replace('T', ' '))}</td><td>${escapeHtml(item.description ?? '')}</td></tr>`).join('')
-        : '<tr><td colspan="6"><span class="empty-state">暂无固件，请先上传</span></td></tr>';
+        ? firmwareReleases.map((item) => `<tr><td>${escapeHtml(item.version)}</td><td>${escapeHtml(item.artifact)}</td><td>${escapeHtml((item.deviceTypes ?? []).join('、') || '-')}</td><td>${item.size} B</td><td class="fw-sha" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256.slice(0, 16))}…</td><td>${escapeHtml((item.releasedAt ?? '').slice(0, 19).replace('T', ' '))}</td><td>${escapeHtml(item.description ?? '')}</td></tr>`).join('')
+        : '<tr><td colspan="7"><span class="empty-state">暂无固件，请先上传</span></td></tr>';
     } catch (error) {
-      firmwareTableBody.innerHTML = '<tr><td colspan="6"><span class="empty-state">无法加载固件列表</span></td></tr>';
+      firmwareTableBody.innerHTML = '<tr><td colspan="7"><span class="empty-state">无法加载固件列表</span></td></tr>';
       setFirmwareStatus(error instanceof Error ? error.message : '加载失败', 'error');
     }
   };
@@ -637,7 +667,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.querySelector('#firmwareFile');
     const file = fileInput.files?.[0];
     if (!version || !file) { setFirmwareStatus('请填写版本并选择文件', 'error'); return; }
+    const selectedDeviceTypes = [...firmwareDeviceTypes.querySelectorAll('input[name="deviceTypes"]:checked')].map((box) => box.value);
+    if (!selectedDeviceTypes.length) { setFirmwareStatus('请至少选择一个设备分类', 'error'); return; }
     const params = new URLSearchParams({ artifact: file.name, ...(description ? { description } : {}) });
+    for (const deviceType of selectedDeviceTypes) params.append('deviceType', deviceType);
     const submit = firmwareForm.querySelector('button[type="submit"]');
     submit.disabled = true;
     try {
@@ -657,8 +690,9 @@ document.addEventListener('DOMContentLoaded', () => {
       submit.disabled = false;
     }
   });
-  document.querySelector('#firmwareRefresh').addEventListener('click', () => void loadFirmwareReleases());
+  document.querySelector('#firmwareRefresh').addEventListener('click', () => { void loadFirmwareReleases(); void loadDeviceTypes(); });
   void loadFirmwareReleases();
+  void loadDeviceTypes();
 
   const eventsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/events`;
   const events = new WebSocket(eventsUrl);

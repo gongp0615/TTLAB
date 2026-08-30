@@ -46,6 +46,21 @@ test('agent launcher is positioned at the workspace left edge on desktop and mob
   assert.ok(mobileLine !== undefined, 'launcher should sit 80px from the left on the collapsed 64px sidebar');
 });
 
+test('firmware management lives on its own page and is listed before system settings in the sidebar', () => {
+  const secondaryNav = indexHtml.slice(indexHtml.indexOf('<nav class="nav-group secondary-nav"'), indexHtml.indexOf('</nav>', indexHtml.indexOf('<nav class="nav-group secondary-nav"')));
+  const agentIndex = secondaryNav.indexOf('data-page="智能体"');
+  const integrationIndex = secondaryNav.indexOf('data-page="集成中心"');
+  const firmwareIndex = secondaryNav.indexOf('data-page="固件管理"');
+  const settingsIndex = secondaryNav.indexOf('data-page="系统设置"');
+  assert.ok(firmwareIndex > -1, '固件管理 nav item must exist');
+  assert.ok(firmwareIndex > integrationIndex && firmwareIndex < settingsIndex, '固件管理 must be ordered before 系统设置');
+  assert.ok(agentIndex > -1 && integrationIndex > agentIndex, 'existing nav order must be preserved');
+  assert.ok(indexHtml.includes('id="firmwarePage"'), 'firmware management must be a dedicated page');
+  assert.ok(indexHtml.includes('id="firmwareUploadForm"'), 'firmware upload form must still exist');
+  assert.ok(!indexHtml.slice(indexHtml.indexOf('id="settingsPage"'), indexHtml.indexOf('</section>', indexHtml.indexOf('id="settingsPage"'))).includes('firmwareUploadForm'), 'system settings page must no longer contain the firmware form');
+  assert.ok(indexHtml.includes('id="firmwareDeviceTypes"'), 'firmware upload form must expose a device category multi-select');
+});
+
 test('dashboard content-wrap fills the workspace when the agent panel is closed', () => {
   const rule = stylesCss.match(/\.content-wrap\s*\{[^}]*\}/);
   assert.ok(rule !== null, '.content-wrap rule must exist');
@@ -57,3 +72,4 @@ test('dashboard content-wrap fills the workspace when the agent panel is closed'
   const mobileRule = stylesCss.match(/@media\s*\(max-width:\s*1280px\)\s*\{\s*\.content-wrap\s*\{[^}]*\}\s*\}/);
   assert.ok(mobileRule === null || !/width\s*:/.test(mobileRule[0]), 'mobile override must not strip the content-wrap width');
 });
+

@@ -33,6 +33,7 @@
           <div class="nav-label">配置管理</div>
           <button class="nav-item" data-page="智能体"><i data-lucide="bot"></i><span>智能体</span></button>
           <button class="nav-item" data-page="集成中心"><i data-lucide="blocks"></i><span>集成中心</span><i data-lucide="arrow-up-right" class="external-icon"></i></button>
+          <button class="nav-item" data-page="固件管理"><i data-lucide="package"></i><span>固件管理</span></button>
           <button class="nav-item" data-page="系统设置"><i data-lucide="settings-2"></i><span>系统设置</span></button>
         </nav>
 
@@ -185,8 +186,18 @@
                 </div>
               </form>
             </article>
+          </div>
+        </section>
+        <section class="settings-page" id="firmwarePage" hidden>
+          <div class="content-wrap">
+            <div class="welcome-row">
+              <div>
+                <h1>固件管理</h1>
+                <p class="welcome-copy" id="firmwareSummary">上传固件文件并关联设备分类，固件只可用于所选分类的设备。</p>
+              </div>
+            </div>
             <article class="panel settings-panel">
-              <div class="panel-header"><h2>固件管理</h2><span class="settings-note">上传 GD32 固件到 Server，供 TV Stick Test Box 刷写使用</span></div>
+              <div class="panel-header"><h2>上传固件</h2><span class="settings-note">同一固件文件可关联一个或多个设备分类</span></div>
               <div class="settings-body">
                 <form id="firmwareUploadForm">
                   <label class="settings-field">
@@ -197,6 +208,10 @@
                     <span class="settings-label">固件文件<span class="settings-hint">bin 文件，大小上限 1 MiB</span></span>
                     <input type="file" id="firmwareFile" accept=".bin" required />
                   </label>
+                  <fieldset class="settings-field device-type-field">
+                    <legend class="settings-label">设备分类<span class="settings-hint">可多选，固件仅可用于所选分类的设备</span></legend>
+                    <div class="device-type-options" id="firmwareDeviceTypes"></div>
+                  </fieldset>
                   <label class="settings-field">
                     <span class="settings-label">描述<span class="settings-hint">可选</span></span>
                     <input type="text" id="firmwareDescription" placeholder="release notes" autocomplete="off" />
@@ -209,8 +224,8 @@
                 </form>
                 <div class="firmware-table-wrap">
                   <table class="firmware-table">
-                    <thead><tr><th>版本</th><th>固件文件</th><th>大小</th><th>SHA-256</th><th>发布时间</th><th>描述</th></tr></thead>
-                    <tbody id="firmwareTableBody"><tr><td colspan="6"><span class="empty-state">加载固件列表...</span></td></tr></tbody>
+                    <thead><tr><th>版本</th><th>固件文件</th><th>设备分类</th><th>大小</th><th>SHA-256</th><th>发布时间</th><th>描述</th></tr></thead>
+                    <tbody id="firmwareTableBody"><tr><td colspan="7"><span class="empty-state">加载固件列表...</span></td></tr></tbody>
                   </table>
                 </div>
               </div>

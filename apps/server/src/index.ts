@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomUUID } from 'node:crypto';
@@ -59,6 +59,7 @@ if (tlsRequired && (!tlsKeyFile || !tlsCertFile)) throw new Error('TLS is requir
 const tlsEnabled = Boolean(tlsKeyFile && tlsCertFile);
 const publicBaseUrl = process.env.TTLAB_PUBLIC_BASE_URL ?? `${tlsEnabled ? 'https' : 'http'}://127.0.0.1:${port}`;
 const webRoot = process.env.TTLAB_WEB_ROOT ?? '.';
+const deviceTypesDirectory = process.env.TTLAB_DEVICE_TYPES_DIR ?? join(webRoot, 'device-types');
 const logDirectory = process.env.TTLAB_LOG_DIR ?? './data/logs';
 const logRetentionDays = Number(process.env.TTLAB_LOG_RETENTION_DAYS ?? 30);
 const logFlushMs = Number(process.env.TTLAB_LOG_FLUSH_MS ?? 500);
@@ -168,6 +169,42 @@ function managedDevices(client: RuntimeClient): Array<Record<string, unknown>> {
   return client.snapshot?.devices.map((device) => ({ ...device, clientId: client.clientId })) ?? [];
 }
 
+interface DeviceCategory {
+  type: string;
+  displayName: string;
+}
+
+// 设备分类来源：device-types/*/device.json 静态配置，合并当前在线设备上报的分类，
+// 保证 Server 未部署 device-types 目录时仍能列出可用分类。
+function listDeviceCategories(): DeviceCategory[] {
+  const categories = new Map<string, string>();
+  if (existsSync(deviceTypesDirectory)) {
+    for (const entry of readdirSync(deviceTypesDirectory)) {
+      if (!isSafeSegment(entry)) continue;
+      const file = join(deviceTypesDirectory, entry, 'device.json');
+      if (!existsSync(file)) continue;
+      try {
+        const profile = JSON.parse(readFileSync(file, 'utf8')) as { type?: unknown; displayName?: unknown };
+        if (typeof profile.type === 'string' && profile.type.length > 0) {
+          categories.set(profile.type, typeof profile.displayName === 'string' && profile.displayName.length > 0 ? profile.displayName : profile.type);
+        }
+      } catch {
+        // 忽略损坏的设备分类配置文件
+      }
+    }
+  }
+  for (const client of clients.values()) {
+    for (const device of client.snapshot?.managedDevices ?? []) {
+      if (typeof device.deviceType === 'string' && device.deviceType.length > 0 && !categories.has(device.deviceType)) {
+        categories.set(device.deviceType, device.deviceType);
+      }
+    }
+  }
+  return [...categories.entries()]
+    .map(([type, displayName]) => ({ type, displayName }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh'));
+}
+
 function logDeviceChunk(clientId: string, chunk: DeviceLogChunk): void {
   logStore.write({
     ts: chunk.capturedAt,
@@ -273,7 +310,7 @@ function dispatchCommand(input: { clientId?: string; deviceId: string; operation
     if (manifest.artifact !== artifact) {
       return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware artifact does not match the release', retryable: false } };
     }
-    if (managedDevice !== undefined && manifest.deviceType !== managedDevice.deviceType) {
+    if (managedDevice !== undefined && !manifest.deviceTypes.includes(managedDevice.deviceType)) {
       return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware does not match the device type', retryable: false } };
     }
     command.firmware = {
@@ -525,9 +562,14 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
       const version = decodeURIComponent(firmwareUploadMatch[1] ?? '');
       const artifact = url.searchParams.get('artifact');
       const description = url.searchParams.get('description') ?? undefined;
-      const deviceType = url.searchParams.get('deviceType') ?? undefined;
+      const deviceTypes = [...new Set(url.searchParams.getAll('deviceType').map((value) => value.trim()).filter(Boolean))];
+      const invalidDeviceType = deviceTypes.find((value) => !isSafeSegment(value));
       if (!artifact) {
         json(response, 400, { error: { code: 'INVALID_ARGUMENT', message: 'artifact query parameter is required', retryable: false } });
+        return;
+      }
+      if (invalidDeviceType !== undefined) {
+        json(response, 400, { error: { code: 'INVALID_ARGUMENT', message: `invalid deviceType "${invalidDeviceType}"`, retryable: false } });
         return;
       }
       try {
@@ -535,10 +577,10 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
           version,
           artifact,
           ...(description !== undefined ? { description } : {}),
-          ...(deviceType !== undefined ? { deviceType } : {}),
+          ...(deviceTypes.length > 0 ? { deviceTypes } : {}),
           body: request,
         });
-        writeAudit({ actor: 'anonymous', action: 'firmware.release.published', detail: { version: manifest.version, artifact: manifest.artifact, sha256: manifest.sha256, size: manifest.size } });
+        writeAudit({ actor: 'anonymous', action: 'firmware.release.published', detail: { version: manifest.version, artifact: manifest.artifact, sha256: manifest.sha256, size: manifest.size, deviceTypes: manifest.deviceTypes } });
         json(response, 201, { data: manifest });
       } catch (error) {
         if (error instanceof FirmwareStoreError) {
@@ -552,6 +594,10 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
     }
     if (request.method === 'GET' && url.pathname === '/api/v1/firmware/releases') {
       json(response, 200, { data: firmwareStore.list() });
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/device-types') {
+      json(response, 200, { data: listDeviceCategories() });
       return;
     }
     const commandMatch = url.pathname.match(/^\/api\/v1\/clients\/([^/]+)\/commands$/);
