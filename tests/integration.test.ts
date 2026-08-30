@@ -95,10 +95,39 @@ test('Server and protocol Client complete sync, command result, disconnect, and 
     const viewer = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`);
     sockets.push(viewer);
     await once(viewer, 'open');
+    viewer.send(JSON.stringify({ type: 'log.subscribe', deviceId: 'tvbox:e2e' }));
     const logPromise = waitForMessage(viewer, (value) => value.type === 'device.log.chunk');
     socket.send(JSON.stringify(message('device.log.chunk', { deviceId: 'tvbox:e2e', portId: 'serial:e2e-log', sequence: 1, capturedAt: new Date().toISOString(), data: 'boot complete\\n', encoding: 'utf-8', truncated: false }, 'client-e2e')));
     const log = await logPromise;
     assert.equal((log.payload as DeviceLogChunk).data, 'boot complete\\n');
+
+    // 未订阅该设备的 viewer 不应收到日志分片
+    const unsubscribed = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`);
+    sockets.push(unsubscribed);
+    await once(unsubscribed, 'open');
+    let unexpectedLog = null;
+    const onUnexpected = (data: WebSocket.RawData) => {
+      const value = parseEnvelope(data.toString());
+      if (value.type === 'device.log.chunk') unexpectedLog = value;
+    };
+    unsubscribed.on('message', onUnexpected);
+    socket.send(JSON.stringify(message('device.log.chunk', { deviceId: 'tvbox:e2e', portId: 'serial:e2e-log', sequence: 2, capturedAt: new Date().toISOString(), data: 'second line\\n', encoding: 'utf-8', truncated: false }, 'client-e2e')));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    unsubscribed.off('message', onUnexpected);
+    assert.equal(unexpectedLog, null);
+
+    // 退订后不再收到该设备日志
+    viewer.send(JSON.stringify({ type: 'log.unsubscribe', deviceId: 'tvbox:e2e' }));
+    let afterUnsubscribeLog = null;
+    const onViewerMessage = (data: WebSocket.RawData) => {
+      const value = parseEnvelope(data.toString());
+      if (value.type === 'device.log.chunk') afterUnsubscribeLog = value;
+    };
+    viewer.on('message', onViewerMessage);
+    socket.send(JSON.stringify(message('device.log.chunk', { deviceId: 'tvbox:e2e', portId: 'serial:e2e-log', sequence: 3, capturedAt: new Date().toISOString(), data: 'third line\\n', encoding: 'utf-8', truncated: false }, 'client-e2e')));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    viewer.off('message', onViewerMessage);
+    assert.equal(afterUnsubscribeLog, null);
 
     socket.close();
     await new Promise((resolve) => setTimeout(resolve, 100));

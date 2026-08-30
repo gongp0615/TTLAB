@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusLabel = { online: '在线', syncing: '恢复中', offline: '离线', available: '可用', busy: '使用中', error: '异常', removed: '已移除', identified: '已识别', matched: '已匹配', partial: '部分连接', ambiguous: '待确认' };
 
   let deviceListSignature = null;
+  const logState = new Map();
   const deviceListSignatureOf = (devices) => devices.map((device) => [
     device.deviceId,
     lastResults[device.deviceId]?.kind === 'pending' ? 'busy' : device.status,
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     device.stableIdentity ?? '',
     (device.operations ?? []).map((operation) => `${operation.operation}:${operation.risk ?? ''}`).join(','),
     JSON.stringify(lastResults[device.deviceId] ?? null),
+    logState.get(device.deviceId)?.enabled ? 'log-on' : 'log-off',
   ].join('|')).join('\n');
   const signatureDiff = (before, after) => {
     const rowOf = (signature) => Object.fromEntries(signature.split('\n').filter(Boolean).map((row) => {
@@ -52,12 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const clients = runtime.clients.filter((client) => clientFilter === 'all' || client.status === clientFilter);
     const onlineClients = runtime.clients.filter((client) => client.status === 'online').length;
     const devices = runtime.devices;
-    const activeCommands = runtime.clients.filter((client) => client.snapshot?.activeCommandId).length;
     document.querySelector('#clientMetric').textContent = String(onlineClients).padStart(2, '0');
     document.querySelector('#clientMetricFoot').textContent = `${runtime.clients.length} 个 Client 已连接或登记`;
     document.querySelector('#deviceMetric').textContent = String(devices.length).padStart(2, '0');
     document.querySelector('#deviceMetricFoot').textContent = `${devices.filter((device) => device.status === 'identified').length} 个设备可操作`;
-    document.querySelector('#commandMetric').textContent = String(activeCommands).padStart(2, '0');
     document.querySelector('#runtimeSummary').textContent = runtime.clients.length ? `${onlineClients}/${runtime.clients.length} 个 Client 在线。` : '当前没有 Client 快照。';
     if (deviceListSignatureOf(devices) === deviceListSignature) return;
     const nextSignature = deviceListSignatureOf(devices);
@@ -81,13 +81,16 @@ document.addEventListener('DOMContentLoaded', () => {
     deviceList.innerHTML = devices.length ? devices.map((device) => {
       const pending = lastResults[device.deviceId]?.kind === 'pending';
       const canControl = device.deviceType === 'tv-stick-test-box' && (device.status === 'identified' || pending);
-      const actions = canControl && Array.isArray(device.operations) && device.operations.length > 0 ? `<div class="device-actions">${device.operations.map((operation) => {
+      const logEnabled = Boolean(logState.get(device.deviceId)?.enabled);
+      const buttons = canControl && Array.isArray(device.operations) ? device.operations.map((operation) => {
         const hasParams = (operation.parameters ?? []).length > 0;
         return `<button class="device-command${operation.risk === 'high' ? ' device-command-danger' : ''}" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="${escapeHtml(operation.operation)}" data-has-params="${hasParams ? '1' : '0'}" ${pending ? 'disabled' : ''}>${escapeHtml(operation.displayName ?? operation.operation)}</button>`;
-      }).join('')}</div>` : '';
+      }).join('') : '';
+      const actions = canControl ? `<div class="device-actions">${buttons}<label class="device-log-toggle"><input type="checkbox" data-log-toggle="${escapeHtml(device.deviceId)}" ${logEnabled ? 'checked' : ''} /><span>串口日志</span></label></div>` : '';
+      const logBox = canControl ? `<pre class="device-log-box" data-log-box="${escapeHtml(device.deviceId)}" ${logEnabled ? '' : 'hidden'}>${escapeHtml(logState.get(device.deviceId)?.buffer ?? '')}</pre>` : '';
       const last = lastResults[device.deviceId];
       const resultHtml = last ? `<div class="device-result ${last.kind}">${escapeHtml(last.message)}</div>` : '';
-      return `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'identified' || device.status === 'matched' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.displayName ?? device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.deviceType ?? 'generic-serial')}</p>${resultHtml}${actions}</div>`;
+      return `<div class="incident-item"><div class="incident-top"><span class="severity-pill ${device.status === 'identified' || device.status === 'matched' ? 'healthy-pill' : 'critical-pill'}">${statusLabel[device.status] ?? '未知'}</span><span class="incident-age">${escapeHtml(device.clientId ?? '未知 Client')}</span></div><h3>${escapeHtml(device.displayName ?? device.deviceId)}</h3><p class="incident-summary">${escapeHtml(device.deviceType ?? 'generic-serial')}</p>${resultHtml}${actions}${logBox}</div>`;
     }).join('') : '<div class="empty-state">没有发现串口设备</div>';
     document.querySelectorAll('.device-command').forEach((button) => button.addEventListener('click', () => { void openDeviceOperation(button); }));
     if (iconRoot) iconRoot.createIcons();
@@ -268,12 +271,82 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-command-close]').forEach((el) => el.addEventListener('click', () => closeModal('#commandModal')));
   document.querySelectorAll('[data-confirm-close]').forEach((el) => el.addEventListener('click', () => { closeModal('#confirmModal'); pendingCommand = null; }));
 
-  const appendLog = (chunk) => {
-    const output = document.querySelector('#logOutput');
-    if (!output) return;
-    output.textContent = `${output.textContent}${chunk.data}`.slice(-64 * 1024);
-    output.scrollTop = output.scrollHeight;
+  const MAX_LOG_BUFFER = 64 * 1024;
+  const decodeBase64 = (value) => { try { return atob(value); } catch { return ''; } };
+  const appendDeviceLog = (deviceId, data) => {
+    const state = logState.get(deviceId);
+    if (!state?.enabled) return;
+    state.buffer = `${state.buffer}${data}`.slice(-MAX_LOG_BUFFER);
+    const box = document.querySelector(`[data-log-box="${CSS.escape(deviceId)}"]`);
+    if (box) {
+      box.textContent = state.buffer;
+      box.scrollTop = box.scrollHeight;
+    }
   };
+
+  const sendLogSubscription = (deviceId, type) => {
+    if (eventsSocket && eventsSocket.readyState === WebSocket.OPEN) {
+      eventsSocket.send(JSON.stringify({ type, deviceId }));
+    }
+  };
+
+  const loadRecentLogs = async (deviceId) => {
+    const maxPages = 50;
+    const limit = 1000;
+    let collected = [];
+    let offset = 0;
+    let hasMore = true;
+    for (let page = 0; page < maxPages && hasMore; page += 1) {
+      const params = new URLSearchParams({ type: 'device', deviceId, limit: String(limit), offset: String(offset) });
+      const response = await fetch(`/api/v1/logs/query?${params.toString()}`);
+      if (!response.ok) break;
+      const body = await response.json();
+      collected = collected.concat(body.data ?? []);
+      hasMore = Boolean(body.hasMore);
+      offset = body.nextOffset;
+    }
+    return collected.slice(-limit).map((entry) => {
+      const raw = entry.data?.data ?? '';
+      return entry.data?.encoding === 'base64' ? decodeBase64(raw) : raw;
+    }).join('');
+  };
+
+  const setDeviceLogEnabled = async (deviceId, enabled) => {
+    const current = logState.get(deviceId)?.enabled === true;
+    if (enabled === current) return;
+    if (!enabled) {
+      logState.set(deviceId, { enabled: false, buffer: '', subscribed: false });
+      sendLogSubscription(deviceId, 'log.unsubscribe');
+      render();
+      return;
+    }
+    logState.set(deviceId, { enabled: true, buffer: '', subscribed: false });
+    render();
+    try {
+      const history = await loadRecentLogs(deviceId);
+      const state = logState.get(deviceId);
+      if (state?.enabled) {
+        state.buffer = history.slice(-MAX_LOG_BUFFER);
+        const box = document.querySelector(`[data-log-box="${CSS.escape(deviceId)}"]`);
+        if (box) {
+          box.textContent = state.buffer;
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+    } catch {
+      // 历史回填失败不阻塞实时订阅
+    }
+    sendLogSubscription(deviceId, 'log.subscribe');
+    const latest = logState.get(deviceId);
+    if (latest) latest.subscribed = true;
+  };
+
+  document.querySelector('#incidentList').addEventListener('change', (event) => {
+    const toggle = event.target.closest('[data-log-toggle]');
+    if (!toggle) return;
+    const deviceId = toggle.dataset.logToggle;
+    void setDeviceLogEnabled(deviceId, toggle.checked);
+  });
 
   let loadRuntimeInFlight = false;
   let loadRuntimeQueued = false;
@@ -696,17 +769,38 @@ document.addEventListener('DOMContentLoaded', () => {
   void loadDeviceTypes();
 
   const eventsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/events`;
-  const events = new WebSocket(eventsUrl);
-  events.addEventListener('message', (event) => {
-    try {
-      const envelope = JSON.parse(event.data);
-      if (envelope.type === 'device.log.chunk') appendLog(envelope.payload);
-      else void loadRuntime();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '实时事件格式错误');
-    }
-  });
-  events.addEventListener('close', () => showToast('实时连接已断开，正在使用轮询恢复'));
+  let eventsSocket = null;
+  let eventsReconnectTimer = null;
+  const connectEvents = () => {
+    if (eventsSocket && (eventsSocket.readyState === WebSocket.OPEN || eventsSocket.readyState === WebSocket.CONNECTING)) return;
+    const socket = new WebSocket(eventsUrl);
+    eventsSocket = socket;
+    socket.addEventListener('open', () => {
+      for (const [deviceId, state] of logState) {
+        if (state.subscribed) socket.send(JSON.stringify({ type: 'log.subscribe', deviceId }));
+      }
+    });
+    socket.addEventListener('message', (event) => {
+      try {
+        const envelope = JSON.parse(event.data);
+        if (envelope.type === 'device.log.chunk') {
+          appendDeviceLog(envelope.payload?.deviceId, envelope.payload?.data ?? '');
+        } else {
+          void loadRuntime();
+        }
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : '实时事件格式错误');
+      }
+    });
+    socket.addEventListener('close', () => {
+      if (eventsSocket === socket) eventsSocket = null;
+      showToast('实时连接已断开，正在重新连接');
+      if (eventsReconnectTimer) clearTimeout(eventsReconnectTimer);
+      eventsReconnectTimer = setTimeout(connectEvents, 3000);
+    });
+    socket.addEventListener('error', () => socket.close());
+  };
+  connectEvents();
   void loadRuntime();
-  setInterval(() => { if (events.readyState !== WebSocket.OPEN) void loadRuntime(); }, 10000);
+  setInterval(() => { if (!eventsSocket || eventsSocket.readyState !== WebSocket.OPEN) void loadRuntime(); }, 10000);
 });

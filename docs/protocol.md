@@ -173,6 +173,28 @@ Client 使用 `update.progress`、`update.completed` 或 `update.failed` 报告�
 
 固件下载引用由 Server 在 `firmware.flash` 指令中构造，Client 校验 SHA-256 后进入 DFU 刷写。
 
+## 5.2 Web 实时事件订阅
+
+Web 实时事件通道（`/api/v1/events`，见第 1 节）默认只推送 `client.snapshot` 状态消息。`device.log.chunk` 等设备日志消息按订阅转发，避免向未查看日志的 Web 连接广播全部设备日志。
+
+Web 端通过同一 WebSocket 连接发送订阅消息：
+
+```json
+{ "type": "log.subscribe", "deviceId": "tvbox:..." }
+```
+
+```json
+{ "type": "log.unsubscribe", "deviceId": "tvbox:..." }
+```
+
+字段要求：
+
+- `deviceId`：要订阅或退订的设备 ID，必须是非空字符串，长度不超过 128，且不含控制字符。
+- 订阅目标设备必须存在于任一在线 Client 快照中，否则订阅请求被忽略。
+- `log.subscribe` 后，Server 仅向该连接转发该设备的 `device.log.chunk`；`log.unsubscribe` 停止转发。
+- Web 连接断开时，Server 自动清除该连接的全部订阅。
+- 未知消息类型和其他字段被忽略，保持向后兼容。
+
 ## 6. 错误格式
 
 ```json

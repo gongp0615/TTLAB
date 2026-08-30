@@ -23,6 +23,7 @@ import {
   type UpdateManifest,
 } from '../../../packages/protocol/src/index.js';
 import { LogStore, parseAuditQuery, parseLogQuery, type LogEntry } from './logstore/index.js';
+import { WebLogSubscriptions } from './web-events.js';
 import { FirmwareStore, FirmwareStoreError } from './firmware.js';
 import { McpServer, type McpServerContext } from './mcp/index.js';
 import { AgentGateway, ApprovalManager, DeepSeekApiClient, DshEngine, ServerNativeEngine, ServerNativeEngineAdapter, buildSystemPrompt, type AgentEngine } from './agent-gateway/index.js';
@@ -149,6 +150,10 @@ function clientView(client: RuntimeClient): Record<string, unknown> {
   };
 }
 
+const webLogSubscriptions = new WebLogSubscriptions({
+  isKnownDevice: (deviceId) => [...clients.values()].some((client) => isDeviceInSnapshot(client, deviceId)),
+});
+
 function broadcastState(client: RuntimeClient): void {
   if (!client.snapshot) return;
   const event = JSON.stringify(message('client.snapshot', client.snapshot, client.clientId));
@@ -158,9 +163,12 @@ function broadcastState(client: RuntimeClient): void {
 }
 
 function broadcastLog(payload: unknown, clientId: string): void {
+  const chunk = payload as DeviceLogChunk;
   const event = JSON.stringify(message('device.log.chunk', payload, clientId));
   for (const viewer of webEventServer.clients) {
-    if (viewer.readyState === WebSocket.OPEN) viewer.send(event);
+    if (viewer.readyState === WebSocket.OPEN && webLogSubscriptions.subscribedDevices(viewer).has(chunk.deviceId)) {
+      viewer.send(event);
+    }
   }
 }
 
@@ -772,6 +780,7 @@ webEventServer.on('connection', (socket) => {
   for (const runtime of clients.values()) {
     if (runtime.snapshot) socket.send(JSON.stringify(message('client.snapshot', runtime.snapshot, runtime.clientId)));
   }
+  webLogSubscriptions.attach(socket);
 });
 
 setInterval(() => {

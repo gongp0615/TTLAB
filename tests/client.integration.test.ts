@@ -441,6 +441,7 @@ test('client captures serial log output and forwards log chunks', async () => {
       await agent.refreshDevices(true);
       const viewer = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`);
       await once(viewer, 'open');
+      viewer.send(JSON.stringify({ type: 'log.subscribe', deviceId: tvBoxDeviceId }));
       const logPromise = waitForEvent(viewer, (value) => value.type === 'device.log.chunk');
       pty.write('boot complete\n');
       const envelope = await logPromise;
