@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import { ApprovalManager } from './approvals.js';
-import { ServerNativeEngine, type AgentTurnContext } from './engine.js';
-import { systemPrompt, type AgentClientMessage, type AgentServerMessage, type ChatMessage, type SessionStatus } from './types.js';
+import type { AgentEngine, AgentEngineOpenContext } from './engine-adapter.js';
+import type { AgentSink } from './engine.js';
+import type { AgentClientMessage, AgentServerMessage, SessionStatus } from './types.js';
 import type { McpServerContext } from '../mcp/index.js';
 
 export interface AgentGatewayOptions {
-  engine: ServerNativeEngine;
+  engine: AgentEngine;
   approvals: ApprovalManager;
   mcpContext: McpServerContext;
   maxSessions: number | (() => number);
@@ -17,9 +18,12 @@ export interface AgentGatewayOptions {
 interface AgentSession {
   sessionId: string;
   socket: WebSocket;
-  messages: ChatMessage[];
+  sink?: AgentSink;
   status: SessionStatus;
   turnRunning: boolean;
+  engineSessionId?: string;
+  engineOpenPromise?: Promise<void>;
+  windowKey?: string;
 }
 
 export class AgentGateway {
@@ -48,10 +52,10 @@ export class AgentGateway {
     const session: AgentSession = {
       sessionId: `session_${randomUUID()}`,
       socket,
-      messages: [{ role: 'system', content: systemPrompt }],
       status: 'idle',
       turnRunning: false,
     };
+    session.sink = this.wrapSink(session);
     this.sessions.set(session.sessionId, session);
     this.send(session, { type: 'agent.session.ready', sessionId: session.sessionId, status: 'idle' });
 
@@ -67,14 +71,23 @@ export class AgentGateway {
     socket.on('close', () => {
       this.options.approvals.rejectSession(session.sessionId);
       this.sessions.delete(session.sessionId);
+      if (session.engineSessionId !== undefined) void this.options.engine.closeSession(session.engineSessionId).catch(() => undefined);
     });
   }
 
   private handleMessage(session: AgentSession, message: AgentClientMessage): void {
-    if (message.type === 'agent.session.open') return;
+    if (message.type === 'agent.session.open') {
+      if (typeof message.sessionId === 'string' && message.sessionId.trim().length > 0 && session.windowKey === undefined) {
+        session.windowKey = message.sessionId.trim();
+      }
+      return;
+    }
     if (message.type === 'agent.approval.response') {
       if (typeof message.approvalId !== 'string' || (message.decision !== 'approved' && message.decision !== 'rejected')) return;
-      this.options.approvals.respond(message.approvalId, message.decision);
+      if (session.engineSessionId === undefined) return;
+      void this.options.engine.respondApproval(session.engineSessionId, message.approvalId, message.decision).catch((error) => {
+        this.send(session, { type: 'agent.error', sessionId: session.sessionId, code: 'AGENT_ENGINE_ERROR', message: error instanceof Error ? error.message : 'approval response failed' });
+      });
       return;
     }
     if (message.type === 'agent.message.submit') {
@@ -88,28 +101,54 @@ export class AgentGateway {
     }
   }
 
+  private async openEngine(session: AgentSession): Promise<void> {
+    if (session.engineSessionId !== undefined) return;
+    if (session.engineOpenPromise === undefined) {
+      const engineSessionId = session.windowKey ?? session.sessionId;
+      const openContext: AgentEngineOpenContext = {
+        webSessionId: engineSessionId,
+        sink: session.sink as AgentSink,
+        approvals: this.options.approvals,
+        mcpContext: this.options.mcpContext,
+        auditApproval: (approvalId, tool, decision, args) => this.options.auditApproval(session.sessionId, approvalId, tool, decision, args),
+      };
+      session.engineOpenPromise = this.options.engine.openSession(openContext)
+        .then(() => { session.engineSessionId = engineSessionId; })
+        .finally(() => { delete session.engineOpenPromise; });
+    }
+    await session.engineOpenPromise;
+  }
+
   private async runTurn(session: AgentSession, content: string): Promise<void> {
     session.turnRunning = true;
     session.status = 'thinking';
     this.send(session, { type: 'agent.session.status', sessionId: session.sessionId, status: 'thinking' });
     this.options.logAgent(session.sessionId, { role: 'user', content });
-    const turnContext: AgentTurnContext = {
-      sessionId: session.sessionId,
-      sink: { send: (message) => this.send(session, message) },
-      approvals: this.options.approvals,
-      mcpContext: this.options.mcpContext,
-      auditApproval: (approvalId, tool, decision, args) => this.options.auditApproval(session.sessionId, approvalId, tool, decision, args),
-    };
     try {
-      session.messages = await this.options.engine.runTurn(turnContext, session.messages, content);
-      session.status = 'idle';
+      await this.openEngine(session);
+      await this.options.engine.submit(session.engineSessionId as string, content);
     } catch (error) {
+      session.turnRunning = false;
       session.status = 'error';
       this.send(session, { type: 'agent.error', sessionId: session.sessionId, code: 'AGENT_ENGINE_ERROR', message: error instanceof Error ? error.message : 'agent engine failed' });
-    } finally {
-      session.turnRunning = false;
-      this.send(session, { type: 'agent.session.status', sessionId: session.sessionId, status: session.status });
+      this.send(session, { type: 'agent.session.status', sessionId: session.sessionId, status: 'error' });
     }
+  }
+
+  private wrapSink(session: AgentSession): AgentSink {
+    return {
+      send: (message) => {
+        if (message.type === 'agent.message.done') {
+          session.turnRunning = false;
+          session.status = 'idle';
+          this.send(session, { type: 'agent.session.status', sessionId: session.sessionId, status: 'idle' });
+        } else if (message.type === 'agent.error') {
+          session.turnRunning = false;
+          session.status = 'error';
+        }
+        this.send(session, message);
+      },
+    };
   }
 
   private send(session: AgentSession, message: AgentServerMessage): void {

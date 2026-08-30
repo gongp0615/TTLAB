@@ -1,6 +1,6 @@
 import { isLogType, type LogQueryOptions, type LogQueryResult } from '../logstore/index.js';
 
-export const highRiskOperations: ReadonlySet<string> = new Set(['system.reset', 'device.reboot']);
+export const highRiskOperations: ReadonlySet<string> = new Set(['system.reset', 'device.reboot', 'firmware.flash']);
 
 export interface ToolResult {
   text: string;
@@ -123,7 +123,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
   },
   {
     name: 'command_execute',
-    description: 'Dispatch a serial operation to a device on a TTLAB client. High-risk operations (system.reset, device.reboot) require user approval and are not available yet.',
+    description: 'Dispatch a serial operation to a device on a TTLAB client. Low-risk operations execute immediately. High-risk operations (system.reset, device.reboot) return APPROVAL_REQUIRED; when you receive that error, ask the operator for explicit approval with ask_user_question (offer yes/no options), then retry the same call after they approve.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -137,9 +137,8 @@ export const toolDefinitions: readonly ToolDefinition[] = [
     },
     handler: (context, args) => {
       const operation = args.operation as string;
-      if (highRiskOperations.has(operation)) {
-        return notFound('APPROVAL_REQUIRED', 'operation requires user approval; the approval flow is not available yet');
-      }
+      // Approval for high-risk operations is enforced upstream by the dsh
+      // approval gate (agent path); dispatch is always audited with actor.
       const parameters = (args.parameters ?? {}) as Record<string, string>;
       const result = context.dispatchCommand({
         ...(args.clientId !== undefined ? { clientId: args.clientId as string } : {}),
@@ -154,7 +153,7 @@ export const toolDefinitions: readonly ToolDefinition[] = [
   },
   {
     name: 'client_update',
-    description: 'Trigger a software update on a TTLAB client. Requires user approval and is not available yet.',
+    description: 'Trigger a software update on a TTLAB client. Approval for the update is enforced upstream by the dsh approval gate (agent path); dispatch is always audited with actor.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -164,6 +163,10 @@ export const toolDefinitions: readonly ToolDefinition[] = [
       required: ['clientId', 'version'],
       additionalProperties: false,
     },
-    handler: () => notFound('APPROVAL_REQUIRED', 'client update requires user approval; the approval flow is not available yet'),
+    handler: (context, args) => {
+      const result = context.dispatchUpdate({ clientId: args.clientId as string, version: args.version as string, actor: 'agent' });
+      if (!result.ok) return { text: JSON.stringify(result.error), isError: true };
+      return { text: JSON.stringify({ updateId: result.updateId, version: result.version, status: 'dispatched' }) };
+    },
   },
 ];

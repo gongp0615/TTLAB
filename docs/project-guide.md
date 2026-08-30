@@ -38,7 +38,7 @@ tv-stick-test-box
 - Client 断线重连、Server 重启后重新同步。
 - 设备日志、事件、指令生命周期和审计记录的文件持久化（logstore）与历史查询 API。
 - TTLAB MCP Server（`/mcp/v1`）：向 Agent（dsh）暴露设备查询、日志检索、指令下发等工具，高风险操作拒绝执行。
-- Agent 网关（`/api/v1/agent/session`）：Web 聊天面板对话、工具调用、高风险操作审批流，`server-native` 引擎接入 DeepSeek 兼容 API。
+- Agent 网关（`/api/v1/agent/session`）：Web 聊天面板对话、工具调用、高风险操作审批流；引擎可选 `server-native`（直连 DeepSeek 兼容 API）或 `dsh`（委托 DeepSeek Harness 管理上下文与工具调用，Web 会话 1:1 映射 dsh 会话）。
 - "系统设置"页面：Agent/模型配置（启用、模型、API Key、API 地址等）运行时修改并原地写入 `server.env`。
 - Updater 的 Hash、Ed25519 签名、架构、协议版本、自检和回滚检查。
 - 本地调试和 Server/Client 一键启动脚本。
@@ -48,7 +48,7 @@ tv-stick-test-box
 - Server 业务状态仍保存在内存中，重启后不会恢复历史数据。
 - Server 默认使用 HTTP/WS，Client 认证默认关闭。
 - Server 目前没有完整的 Web 用户认证和 RBAC。
-- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板/审批流已可用；dsh 实际联调待网络可用，见 [agent-integration.md](agent-integration.md)。
+- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板/审批流已可用；`dsh` 引擎（DshEngine）已实现并配有 mock 联调测试，真实 dsh 环境联调待网络可用，见 [agent-integration.md](agent-integration.md)。
 - Test Box 的日志口需要根据真实设备确认，自动识别目前只负责控制口探测。
 - 当前配置默认将一个 Client 上发现的同类 Test Box 端点聚合为一个设备；同一 Client 挂载多台相同 Test Box 时，还需要增加按 USB 拓扑或显式绑定的分组配置。
 
@@ -95,7 +95,8 @@ TTLAB_SERVER_PORT=9000
 TTLAB_PUBLIC_BASE_URL=http://127.0.0.1:9000
 TTLAB_CLIENT_AUTH_ENABLED=0
 TTLAB_CLIENT_TOKENS=
-TTLAB_RELEASE_DIR=/srv/ttlab/releases
+# 发布包与固件存储根目录默认取运行用户家目录：~/.local/state/ttlab-server/releases
+# TTLAB_RELEASE_DIR=
 TTLAB_TLS_REQUIRED=0
 TTLAB_TLS_KEY_FILE=
 TTLAB_TLS_CERT_FILE=

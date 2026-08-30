@@ -31,4 +31,14 @@ export class DeviceCommandExecutor {
       this.activeDevices.delete(device.deviceId);
     }
   }
+
+  acquire(deviceId: string, commandId: string): boolean {
+    if (this.activeDevices.has(deviceId)) return false;
+    this.activeDevices.set(deviceId, commandId);
+    return true;
+  }
+
+  release(deviceId: string): void {
+    this.activeDevices.delete(deviceId);
+  }
 }

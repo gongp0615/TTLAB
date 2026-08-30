@@ -17,6 +17,37 @@ document.addEventListener('DOMContentLoaded', () => {
   const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
   const statusLabel = { online: '在线', syncing: '恢复中', offline: '离线', available: '可用', busy: '使用中', error: '异常', removed: '已移除', identified: '已识别', matched: '已匹配', partial: '部分连接', ambiguous: '待确认' };
 
+  let deviceListSignature = null;
+  const deviceListSignatureOf = (devices) => devices.map((device) => [
+    device.deviceId,
+    lastResults[device.deviceId]?.kind === 'pending' ? 'busy' : device.status,
+    device.deviceType,
+    device.clientId,
+    device.displayName ?? '',
+    device.stableIdentity ?? '',
+    (device.operations ?? []).map((operation) => `${operation.operation}:${operation.risk ?? ''}`).join(','),
+    JSON.stringify(lastResults[device.deviceId] ?? null),
+  ].join('|')).join('\n');
+  const signatureDiff = (before, after) => {
+    const rowOf = (signature) => Object.fromEntries(signature.split('\n').filter(Boolean).map((row) => {
+      const parts = row.split('|');
+      return [parts[0] ?? '?', { status: parts[1] ?? '', clientId: parts[3] ?? '', lastResult: parts[7] ?? '' }];
+    }));
+    const beforeRows = rowOf(before);
+    const afterRows = rowOf(after);
+    const changes = [];
+    for (const [id, row] of Object.entries(afterRows)) {
+      const prior = beforeRows[id];
+      if (!prior) { changes.push(`${id}:added`); continue; }
+      if (prior.status !== row.status) changes.push(`${id}:status ${prior.status}->${row.status}`);
+      if (prior.lastResult !== row.lastResult) changes.push(`${id}:result changed`);
+    }
+    for (const id of Object.keys(beforeRows)) {
+      if (!afterRows[id]) changes.push(`${id}:removed`);
+    }
+    return changes;
+  };
+
   const render = () => {
     const clients = runtime.clients.filter((client) => clientFilter === 'all' || client.status === clientFilter);
     const onlineClients = runtime.clients.filter((client) => client.status === 'online').length;
@@ -28,6 +59,13 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#deviceMetricFoot').textContent = `${devices.filter((device) => device.status === 'identified').length} 个设备可操作`;
     document.querySelector('#commandMetric').textContent = String(activeCommands).padStart(2, '0');
     document.querySelector('#runtimeSummary').textContent = runtime.clients.length ? `${onlineClients}/${runtime.clients.length} 个 Client 在线。` : '当前没有 Client 快照。';
+    if (deviceListSignatureOf(devices) === deviceListSignature) return;
+    const nextSignature = deviceListSignatureOf(devices);
+    if (deviceListSignature !== null) {
+      // eslint-disable-next-line no-console
+      console.log('[ttlab-render] device list rebuild', JSON.stringify({ changedFields: signatureDiff(deviceListSignature, nextSignature), count: devices.length, at: new Date().toISOString() }));
+    }
+    deviceListSignature = nextSignature;
 
     const clientRows = document.querySelector('#serviceRows');
     clientRows.innerHTML = clients.length ? clients.map((client) => {
@@ -41,10 +79,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const deviceList = document.querySelector('#incidentList');
     deviceList.innerHTML = devices.length ? devices.map((device) => {
-      const canControl = device.deviceType === 'tv-stick-test-box' && device.status === 'identified';
+      const pending = lastResults[device.deviceId]?.kind === 'pending';
+      const canControl = device.deviceType === 'tv-stick-test-box' && (device.status === 'identified' || pending);
       const actions = canControl && Array.isArray(device.operations) && device.operations.length > 0 ? `<div class="device-actions">${device.operations.map((operation) => {
         const hasParams = (operation.parameters ?? []).length > 0;
-        return `<button class="device-command${operation.risk === 'high' ? ' device-command-danger' : ''}" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="${escapeHtml(operation.operation)}" data-has-params="${hasParams ? '1' : '0'}">${escapeHtml(operation.displayName ?? operation.operation)}</button>`;
+        return `<button class="device-command${operation.risk === 'high' ? ' device-command-danger' : ''}" data-client-id="${escapeHtml(device.clientId)}" data-device-id="${escapeHtml(device.deviceId)}" data-operation="${escapeHtml(operation.operation)}" data-has-params="${hasParams ? '1' : '0'}" ${pending ? 'disabled' : ''}>${escapeHtml(operation.displayName ?? operation.operation)}</button>`;
       }).join('')}</div>` : '';
       const last = lastResults[device.deviceId];
       const resultHtml = last ? `<div class="device-result ${last.kind}">${escapeHtml(last.message)}</div>` : '';
@@ -67,16 +106,29 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   const pollCommand = async (commandId) => {
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 120_000;
     while (Date.now() < deadline) {
       const response = await fetch(`/api/v1/commands/${encodeURIComponent(commandId)}`);
       const body = await response.json();
       const status = body.data?.status;
+      const progress = body.data?.progress;
+      if (progress) showCommandResult(`固件刷写进度：${progressStageLabel(progress.stage)} ${progress.progress}%`, 'pending');
       if (status === 'result' || status === 'failed') return body.data;
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     return { status: 'timeout' };
   };
+
+  const progressStageLabel = (stage) => ({
+    downloading: '下载固件',
+    verifying: '校验固件',
+    'entering-dfu': '进入 DFU',
+    'waiting-for-dfu': '等待 DFU 设备',
+    flashing: '刷写中',
+    'verifying-flash': '回读校验',
+    restarting: '设备重启',
+    'verifying-firmware': '版本校验',
+  }[stage] ?? stage);
 
   const runCommand = async (device, operation, parameters, mode) => {
     const submitButton = document.querySelector('#commandSubmit');
@@ -137,15 +189,34 @@ document.addEventListener('DOMContentLoaded', () => {
     activeOperation = { device, operation };
     document.querySelector('#commandTitle').textContent = operation.displayName ?? operation.operation;
     document.querySelector('#commandDescription').textContent = operation.description ?? '';
-    document.querySelector('#commandFields').innerHTML = (operation.parameters ?? []).map((schema) => {
-      const label = schema.label ?? schema.name;
-      const required = schema.required !== false;
-      if (schema.type === 'enum') {
-        const options = (schema.options ?? []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('');
-        return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><select name="${escapeHtml(schema.name)}">${options}</select></div>`;
-      }
-      return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><input name="${escapeHtml(schema.name)}" type="text" placeholder="${escapeHtml(schema.placeholder ?? '')}" ${required ? 'required' : ''} data-pattern="${escapeHtml(schema.pattern ?? '')}" /><em class="field-error"></em></div>`;
-    }).join('');
+    if (operation.operation === 'firmware.flash') {
+      document.querySelector('#commandFields').innerHTML = `
+        <div class="command-field"><label>固件版本 *</label><select name="version" id="firmwareVersionSelect"><option value="">加载中...</option></select></div>
+        <div class="command-field"><label>固件文件 *</label><input name="artifact" id="firmwareArtifactInput" type="text" readonly required /></div>`;
+      const versionSelect = document.querySelector('#firmwareVersionSelect');
+      const artifactInput = document.querySelector('#firmwareArtifactInput');
+      const populate = (releases) => {
+        versionSelect.innerHTML = releases.length ? releases.map((item) => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)} · ${escapeHtml(item.artifact)}</option>`).join('') : '<option value="">暂无固件，请先到系统设置上传</option>';
+        const selected = releases.find((item) => item.version === versionSelect.value);
+        artifactInput.value = selected?.artifact ?? '';
+      };
+      populate(firmwareReleases);
+      void fetch('/api/v1/firmware/releases').then((response) => response.json()).then((body) => { firmwareReleases = body.data ?? []; populate(firmwareReleases); }).catch(() => { versionSelect.innerHTML = '<option value="">固件列表加载失败</option>'; });
+      versionSelect.addEventListener('change', () => {
+        const selected = firmwareReleases.find((item) => item.version === versionSelect.value);
+        artifactInput.value = selected?.artifact ?? '';
+      });
+    } else {
+      document.querySelector('#commandFields').innerHTML = (operation.parameters ?? []).map((schema) => {
+        const label = schema.label ?? schema.name;
+        const required = schema.required !== false;
+        if (schema.type === 'enum') {
+          const options = (schema.options ?? []).map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('');
+          return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><select name="${escapeHtml(schema.name)}">${options}</select></div>`;
+        }
+        return `<div class="command-field"><label>${escapeHtml(label)}${required ? ' *' : ''}</label><input name="${escapeHtml(schema.name)}" type="text" placeholder="${escapeHtml(schema.placeholder ?? '')}" ${required ? 'required' : ''} data-pattern="${escapeHtml(schema.pattern ?? '')}" /><em class="field-error"></em></div>`;
+      }).join('');
+    }
     const resultEl = document.querySelector('#commandResult');
     resultEl.hidden = true;
     resultEl.className = 'command-result';
@@ -201,17 +272,34 @@ document.addEventListener('DOMContentLoaded', () => {
     output.scrollTop = output.scrollHeight;
   };
 
+  let loadRuntimeInFlight = false;
+  let loadRuntimeQueued = false;
   const loadRuntime = async () => {
+    if (loadRuntimeInFlight) {
+      loadRuntimeQueued = true;
+      return;
+    }
+    loadRuntimeInFlight = true;
     try {
       const [clientsResponse, devicesResponse] = await Promise.all([fetch('/api/v1/clients'), fetch('/api/v1/devices')]);
       if (!clientsResponse.ok || !devicesResponse.ok) throw new Error('Server 返回错误');
-      runtime = { clients: (await clientsResponse.json()).data ?? [], devices: (await devicesResponse.json()).data ?? [] };
+      const devices = (await devicesResponse.json()).data ?? [];
+      const clients = (await clientsResponse.json()).data ?? [];
+      // eslint-disable-next-line no-console
+      console.log('[ttlab-loadRuntime]', JSON.stringify({ devices: devices.map((device) => `${device.deviceId}:${device.status}`), clients: clients.length, at: new Date().toISOString() }));
+      runtime = { clients, devices };
       render();
     } catch (error) {
       document.querySelector('#runtimeSummary').textContent = '无法连接 Server，正在等待恢复。';
       document.querySelector('#serviceRows').innerHTML = '<tr><td colspan="2"><div class="empty-state">Server 暂不可用</div></td></tr>';
       document.querySelector('#incidentList').innerHTML = '<div class="empty-state">无法获取设备状态</div>';
       showToast(error.message);
+    } finally {
+      loadRuntimeInFlight = false;
+      if (loadRuntimeQueued) {
+        loadRuntimeQueued = false;
+        void loadRuntime();
+      }
     }
   };
 
@@ -260,6 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const agentConn = document.querySelector('#agentConn');
   let agentSocket = null;
   let agentSessionId = '';
+  let agentWindowKey = '';
   let agentOpen = false;
   let agentBusy = false;
   let assistantBubble = null;
@@ -400,7 +489,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (agentSocket && (agentSocket.readyState === WebSocket.OPEN || agentSocket.readyState === WebSocket.CONNECTING)) return;
     const agentUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/agent/session`;
     agentSocket = new WebSocket(agentUrl);
-    agentSocket.addEventListener('open', () => setAgentConn(true));
+    agentSocket.addEventListener('open', () => {
+      setAgentConn(true);
+      if (!agentWindowKey) {
+        try {
+          agentWindowKey = sessionStorage.getItem('ttlab.agent.window') ?? (crypto.randomUUID ? crypto.randomUUID() : `win-${Date.now()}`);
+          sessionStorage.setItem('ttlab.agent.window', agentWindowKey);
+        } catch { agentWindowKey = ''; }
+      }
+      if (agentWindowKey) agentSocket.send(JSON.stringify({ type: 'agent.session.open', sessionId: agentWindowKey }));
+    });
     agentSocket.addEventListener('message', (event) => {
       try { handleAgentMessage(JSON.parse(event.data)); } catch (error) { showToast(error instanceof Error ? error.message : '智能体消息格式错误'); }
     });
@@ -434,6 +532,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsForm = document.querySelector('#agentSettingsForm');
   const settingsStatus = document.querySelector('#settingsStatus');
   const settingApiKeyState = document.querySelector('#settingApiKeyState');
+  const settingDshTokenState = document.querySelector('#settingDshTokenState');
   const setSettingsStatus = (message, kind) => {
     settingsStatus.textContent = message;
     settingsStatus.className = `settings-status${kind ? ` ${kind}` : ''}`;
@@ -445,13 +544,18 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!response.ok) throw new Error('无法读取设置');
       const data = (await response.json()).data;
       document.querySelector('#settingEnabled').checked = data.enabled;
+      document.querySelector('#settingEngine').value = data.engine;
       document.querySelector('#settingModel').value = data.model;
       document.querySelector('#settingLlmUrl').value = data.llmUrl;
       document.querySelector('#settingMaxSessions').value = String(data.maxSessions);
       document.querySelector('#settingApprovalTimeoutMs').value = String(data.approvalTimeoutMs);
+      document.querySelector('#settingDshBaseUrl').value = data.dshBaseUrl;
+      document.querySelector('#settingDshWorkdir').value = data.dshWorkdir;
       document.querySelector('#settingApiKey').value = '';
       document.querySelector('#settingAgentToken').value = '';
+      document.querySelector('#settingDshToken').value = '';
       settingApiKeyState.textContent = data.apiKeyConfigured ? `已配置（${data.apiKeyHint || '****'}）` : '未配置';
+      settingDshTokenState.textContent = data.dshTokenConfigured ? '已配置' : '未配置';
       setSettingsStatus('已加载', 'ok');
     } catch (error) {
       setSettingsStatus(error instanceof Error ? error.message : '加载失败', 'error');
@@ -461,15 +565,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveAgentSettings = async () => {
     const body = {
       enabled: document.querySelector('#settingEnabled').checked,
+      engine: document.querySelector('#settingEngine').value,
       model: document.querySelector('#settingModel').value.trim(),
       llmUrl: document.querySelector('#settingLlmUrl').value.trim(),
       maxSessions: Number(document.querySelector('#settingMaxSessions').value),
       approvalTimeoutMs: Number(document.querySelector('#settingApprovalTimeoutMs').value),
+      dshBaseUrl: document.querySelector('#settingDshBaseUrl').value.trim(),
+      dshWorkdir: document.querySelector('#settingDshWorkdir').value.trim(),
     };
     const apiKey = document.querySelector('#settingApiKey').value.trim();
     const agentToken = document.querySelector('#settingAgentToken').value.trim();
+    const dshToken = document.querySelector('#settingDshToken').value.trim();
     if (apiKey) body.apiKey = apiKey;
     if (agentToken) body.agentToken = agentToken;
+    if (dshToken) body.dshToken = dshToken;
     try {
       const response = await fetch('/api/v1/settings/agent', {
         method: 'PUT',
@@ -479,8 +588,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error?.message ?? '保存失败');
       settingApiKeyState.textContent = result.data.apiKeyConfigured ? `已配置（${result.data.apiKeyHint || '****'}）` : '未配置';
+      settingDshTokenState.textContent = result.data.dshTokenConfigured ? '已配置' : '未配置';
       document.querySelector('#settingApiKey').value = '';
       document.querySelector('#settingAgentToken').value = '';
+      document.querySelector('#settingDshToken').value = '';
       setSettingsStatus('已保存并生效', 'ok');
       showToast('Agent 设置已保存');
     } catch (error) {
@@ -495,6 +606,59 @@ document.addEventListener('DOMContentLoaded', () => {
     void saveAgentSettings();
   });
   document.querySelector('#settingsReload').addEventListener('click', () => void loadAgentSettings());
+
+  const firmwareForm = document.querySelector('#firmwareUploadForm');
+  const firmwareStatus = document.querySelector('#firmwareStatus');
+  const firmwareTableBody = document.querySelector('#firmwareTableBody');
+  const setFirmwareStatus = (message, kind) => {
+    firmwareStatus.textContent = message;
+    firmwareStatus.className = `settings-status${kind ? ` ${kind}` : ''}`;
+  };
+  let firmwareReleases = [];
+
+  const loadFirmwareReleases = async () => {
+    try {
+      const response = await fetch('/api/v1/firmware/releases');
+      if (!response.ok) throw new Error('无法读取固件列表');
+      firmwareReleases = (await response.json()).data ?? [];
+      firmwareTableBody.innerHTML = firmwareReleases.length
+        ? firmwareReleases.map((item) => `<tr><td>${escapeHtml(item.version)}</td><td>${escapeHtml(item.artifact)}</td><td>${item.size} B</td><td class="fw-sha" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256.slice(0, 16))}…</td><td>${escapeHtml((item.releasedAt ?? '').slice(0, 19).replace('T', ' '))}</td><td>${escapeHtml(item.description ?? '')}</td></tr>`).join('')
+        : '<tr><td colspan="6"><span class="empty-state">暂无固件，请先上传</span></td></tr>';
+    } catch (error) {
+      firmwareTableBody.innerHTML = '<tr><td colspan="6"><span class="empty-state">无法加载固件列表</span></td></tr>';
+      setFirmwareStatus(error instanceof Error ? error.message : '加载失败', 'error');
+    }
+  };
+
+  firmwareForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const version = document.querySelector('#firmwareVersion').value.trim();
+    const description = document.querySelector('#firmwareDescription').value.trim();
+    const fileInput = document.querySelector('#firmwareFile');
+    const file = fileInput.files?.[0];
+    if (!version || !file) { setFirmwareStatus('请填写版本并选择文件', 'error'); return; }
+    const params = new URLSearchParams({ artifact: file.name, ...(description ? { description } : {}) });
+    const submit = firmwareForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/firmware/releases/${encodeURIComponent(version)}?${params.toString()}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error?.message ?? '上传失败');
+      setFirmwareStatus(`固件 ${body.data.version} 已发布`, 'ok');
+      showToast('固件上传成功');
+      fileInput.value = '';
+      document.querySelector('#firmwareVersion').value = '';
+      document.querySelector('#firmwareDescription').value = '';
+      await loadFirmwareReleases();
+    } catch (error) {
+      setFirmwareStatus(error instanceof Error ? error.message : '上传失败', 'error');
+      showToast(error instanceof Error ? error.message : '上传失败');
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  document.querySelector('#firmwareRefresh').addEventListener('click', () => void loadFirmwareReleases());
+  void loadFirmwareReleases();
 
   const eventsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/events`;
   const events = new WebSocket(eventsUrl);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { message, parseClientHello, parseDeviceLogChunk, parseEnvelope, validateCommandParameters, type DeviceOperation } from '../packages/protocol/src/index.js';
+import { message, parseCommandProgress, parseCommandRequest, parseClientHello, parseDeviceLogChunk, parseEnvelope, validateCommandParameters, type DeviceOperation } from '../packages/protocol/src/index.js';
 import { buildTvStickCommand, SerialOperationError, TvStickTestBoxAdapter } from '../apps/client/src/serial.js';
 
 test('creates and parses a versioned message envelope', () => {
@@ -100,4 +100,57 @@ test('executes an adapter operation through a fake serial session', async () => 
   });
   assert.equal(result.success, true);
   assert.deepEqual(calls, ['AT+HDMI1?']);
+});
+
+test('parses a command request with a firmware download reference', () => {
+  const request = parseCommandRequest({
+    commandId: 'cmd-1',
+    deviceId: 'tvbox:test',
+    operation: 'firmware.flash',
+    parameters: { version: 'V39', artifact: 'Panda_COM-V39-release.bin' },
+    issuedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    firmware: { release: 'V39', artifact: 'Panda_COM-V39-release.bin', downloadUrl: 'http://server/agent/v1/releases/V39/Panda_COM-V39-release.bin?clientId=client-1', sha256: 'a'.repeat(64), expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+  });
+  assert.equal(request.operation, 'firmware.flash');
+  assert.equal(request.firmware?.release, 'V39');
+  assert.equal(request.firmware?.sha256, 'a'.repeat(64));
+});
+
+test('parses a command request without a firmware reference', () => {
+  const request = parseCommandRequest({ commandId: 'cmd-1', deviceId: 'tvbox:test', operation: 'system.ping', parameters: {}, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() });
+  assert.equal(request.firmware, undefined);
+});
+
+test('rejects a command request with an invalid firmware sha256', () => {
+  assert.throws(() => parseCommandRequest({
+    commandId: 'cmd-1',
+    deviceId: 'tvbox:test',
+    operation: 'firmware.flash',
+    parameters: {},
+    issuedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    firmware: { release: 'V39', artifact: 'panda.bin', downloadUrl: 'http://server/agent/v1/releases/V39/panda.bin', sha256: 'not-a-hash', expiresAt: new Date().toISOString() },
+  }), /sha256/);
+});
+
+test('rejects a command request with an unsafe firmware artifact name', () => {
+  assert.throws(() => parseCommandRequest({
+    commandId: 'cmd-1',
+    deviceId: 'tvbox:test',
+    operation: 'firmware.flash',
+    parameters: {},
+    issuedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    firmware: { release: 'V39', artifact: '../evil.bin', downloadUrl: 'http://server/agent/v1/releases/V39/evil.bin', sha256: 'a'.repeat(64), expiresAt: new Date().toISOString() },
+  }), /safe path segments/);
+});
+
+test('parses and validates command progress messages', () => {
+  const progress = parseCommandProgress({ commandId: 'cmd-1', deviceId: 'tvbox:test', stage: 'flashing', progress: 42, message: 'writing flash' });
+  assert.equal(progress.stage, 'flashing');
+  assert.equal(progress.progress, 42);
+  assert.equal(progress.message, 'writing flash');
+  assert.throws(() => parseCommandProgress({ commandId: 'cmd-1', deviceId: 'tvbox:test', stage: 'unknown', progress: 42 }), /invalid/);
+  assert.throws(() => parseCommandProgress({ commandId: 'cmd-1', deviceId: 'tvbox:test', stage: 'flashing', progress: 101 }), /between 0 and 100/);
 });

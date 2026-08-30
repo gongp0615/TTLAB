@@ -67,11 +67,16 @@ export class DeviceManager {
         }
       }
     }
+    const previousDevices = this.devices;
     this.ports = ports;
     this.devices = buildManagedDevices(ports, { controlSelector, logSelector });
     this.signature = hardwareSignature;
     if (controlSelector || logSelector) this.writeBinding({ controlSelector, logSelector });
     await this.reconcileLogCollectors();
+    if (process.env.TTLAB_DEBUG_DEVICE === '1') {
+      const statusOf = (devices: ManagedDevice[]) => devices.map((device) => `${device.deviceId}:${device.status}:${device.ports.map((port) => port.portRole ?? '?').join('/')}`).join('; ') || '(none)';
+      console.log(JSON.stringify({ event: 'device_manager_refresh', signatureChanged: true, ports: ports.length, tvPorts: tvPorts.length, before: statusOf(previousDevices), after: statusOf(this.devices), controlSelector, logSelector, at: new Date().toISOString() }));
+    }
     return true;
   }
 

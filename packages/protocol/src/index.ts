@@ -129,6 +129,33 @@ export interface CommandRequest {
   parameters: Record<string, string>;
   issuedAt: string;
   expiresAt: string;
+  firmware?: FirmwareDownloadRef;
+}
+
+export interface FirmwareDownloadRef {
+  release: string;
+  artifact: string;
+  downloadUrl: string;
+  sha256: string;
+  expiresAt: string;
+}
+
+export interface CommandProgress {
+  commandId: string;
+  deviceId: string;
+  stage: 'downloading' | 'verifying' | 'entering-dfu' | 'waiting-for-dfu' | 'flashing' | 'verifying-flash' | 'restarting' | 'verifying-firmware';
+  progress: number;
+  message?: string;
+}
+
+export interface FirmwareManifest {
+  version: string;
+  artifact: string;
+  sha256: string;
+  size: number;
+  deviceType: string;
+  releasedAt: string;
+  description?: string;
 }
 
 export interface CommandResult {
@@ -210,11 +237,40 @@ export function parseClientSnapshot(payload: unknown): ClientSnapshot {
   return value as unknown as ClientSnapshot;
 }
 
+const safeSegmentPattern = /^[A-Za-z0-9._-]+$/;
+const sha256Pattern = /^[a-f0-9]{64}$/i;
+
+function parseFirmwareReference(value: Record<string, unknown>): FirmwareDownloadRef {
+  const release = stringField(value, 'release');
+  const artifact = stringField(value, 'artifact');
+  const downloadUrl = stringField(value, 'downloadUrl');
+  const sha256 = stringField(value, 'sha256');
+  const expiresAt = stringField(value, 'expiresAt');
+  if (!safeSegmentPattern.test(release) || !safeSegmentPattern.test(artifact)) throw new ProtocolError('INVALID_ARGUMENT', 'firmware release and artifact must be safe path segments');
+  if (!sha256Pattern.test(sha256)) throw new ProtocolError('INVALID_ARGUMENT', 'firmware sha256 must be a 64 character hex digest');
+  if (!/^https?:\/\/.+/.test(downloadUrl)) throw new ProtocolError('INVALID_ARGUMENT', 'firmware downloadUrl must be an http(s) URL');
+  if (!Number.isFinite(Date.parse(expiresAt))) throw new ProtocolError('INVALID_ARGUMENT', 'firmware downloadUrl has an invalid expiry');
+  return { release, artifact, downloadUrl, sha256, expiresAt };
+}
+
 export function parseCommandRequest(payload: unknown): CommandRequest {
   const value = object(payload, 'command');
   const parameters = object(value.parameters, 'parameters');
   if (!Object.values(parameters).every((item) => typeof item === 'string' && item.length <= 128)) throw new ProtocolError('INVALID_ARGUMENT', 'command parameters must be short strings');
-  return { commandId: stringField(value, 'commandId'), deviceId: stringField(value, 'deviceId'), operation: stringField(value, 'operation'), parameters: parameters as Record<string, string>, issuedAt: stringField(value, 'issuedAt'), expiresAt: stringField(value, 'expiresAt') };
+  const request: CommandRequest = { commandId: stringField(value, 'commandId'), deviceId: stringField(value, 'deviceId'), operation: stringField(value, 'operation'), parameters: parameters as Record<string, string>, issuedAt: stringField(value, 'issuedAt'), expiresAt: stringField(value, 'expiresAt') };
+  if (value.firmware !== undefined) request.firmware = parseFirmwareReference(object(value.firmware, 'firmware'));
+  return request;
+}
+
+export function parseCommandProgress(payload: unknown): CommandProgress {
+  const value = object(payload, 'command progress');
+  const stage = value.stage;
+  const knownStages = ['downloading', 'verifying', 'entering-dfu', 'waiting-for-dfu', 'flashing', 'verifying-flash', 'restarting', 'verifying-firmware'];
+  if (!knownStages.includes(stage as string)) throw new ProtocolError('INVALID_ARGUMENT', 'command progress stage is invalid');
+  if (!Number.isFinite(value.progress) || Number(value.progress) < 0 || Number(value.progress) > 100) throw new ProtocolError('INVALID_ARGUMENT', 'command progress must be between 0 and 100');
+  const progress: CommandProgress = { commandId: stringField(value, 'commandId'), deviceId: stringField(value, 'deviceId'), stage: stage as CommandProgress['stage'], progress: Number(value.progress) };
+  if (typeof value.message === 'string' && value.message.length > 0) progress.message = value.message;
+  return progress;
 }
 
 export function parseCommandResult(payload: unknown): CommandResult {

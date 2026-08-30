@@ -31,7 +31,8 @@
     "serial-log",
     "hdmi",
     "usb-path",
-    "system"
+    "system",
+    "firmware-flash"
   ],
   "operations": [
     {
@@ -184,6 +185,29 @@
             "NRM",
             "DWN"
           ],
+          "required": true
+        }
+      ]
+    },
+    {
+      "operation": "firmware.flash",
+      "displayName": "固件刷写",
+      "description": "通过 DFU 模式刷写 GD32 固件（高风险）",
+      "risk": "high",
+      "command": "",
+      "parameters": [
+        {
+          "name": "version",
+          "label": "固件版本",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "required": true
+        },
+        {
+          "name": "artifact",
+          "label": "固件文件",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
           "required": true
         }
       ]

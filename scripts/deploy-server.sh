@@ -36,7 +36,7 @@ PORT="${TTLAB_SERVER_PORT:-9000}"
 TLS_KEY_FILE="${TTLAB_TLS_KEY_FILE:-}"
 TLS_CERT_FILE="${TTLAB_TLS_CERT_FILE:-}"
 PUBLIC_BASE_URL="${TTLAB_PUBLIC_BASE_URL:-http://127.0.0.1:${PORT}}"
-RELEASE_DIRECTORY="${TTLAB_RELEASE_DIR:-/srv/ttlab/releases}"
+RELEASE_DIRECTORY="${TTLAB_RELEASE_DIR:-}"
 CLIENT_TOKENS="${TTLAB_CLIENT_TOKENS:-}"
 CLIENT_AUTH_ENABLED="${TTLAB_CLIENT_AUTH_ENABLED:-0}"
 NODE_BIN="$(command -v node || true)"
@@ -72,6 +72,12 @@ NODE_MAJOR="$($NODE_BIN -p 'process.versions.node.split(".")[0]')"
 # Deploy-time operations (writing /etc/systemd, creating the user) still need root.
 if ! id "$SERVER_USER" >/dev/null 2>&1; then
   useradd --system --home-dir "/var/lib/$SERVER_USER" --create-home --shell /usr/sbin/nologin "$SERVER_USER"
+fi
+# Release/firmware store defaults to the service user's own state directory,
+# so both the deployed service and a debug server can write it without root.
+if [[ -z "$RELEASE_DIRECTORY" ]]; then
+  SERVER_HOME="$(getent passwd "$SERVER_USER" | cut -d: -f6)"
+  RELEASE_DIRECTORY="${SERVER_HOME}/.local/state/ttlab-server/releases"
 fi
 install -d -m 0755 "$INSTALL_ROOT/releases"
 install -d -m 0750 -o "$SERVER_USER" -g "$SERVER_USER" "$RELEASE_DIRECTORY"

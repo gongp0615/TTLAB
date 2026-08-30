@@ -3,7 +3,7 @@ import test from 'node:test';
 import { ApprovalManager } from '../apps/server/src/agent-gateway/approvals.js';
 import { ServerNativeEngine } from '../apps/server/src/agent-gateway/engine.js';
 import type { LlmChatResult, LlmClient } from '../apps/server/src/agent-gateway/llm.js';
-import type { AgentServerMessage } from '../apps/server/src/agent-gateway/types.js';
+import { buildSystemPrompt, type AgentServerMessage } from '../apps/server/src/agent-gateway/types.js';
 import type { AgentSink, AgentTurnContext } from '../apps/server/src/agent-gateway/engine.js';
 import type { McpServerContext } from '../apps/server/src/mcp/index.js';
 
@@ -57,6 +57,22 @@ function fakeContext(sink: FakeSink, approvals: ApprovalManager, overrides: Part
   return { context: { sessionId: 'session-1', sink, approvals, mcpContext, auditApproval: () => undefined } };
 }
 
+test('system prompt reports only the configured model and forbids invented identity', () => {
+  const prompt = buildSystemPrompt('deepseek-chat');
+  assert.match(prompt, /Configured model: deepseek-chat/);
+  assert.match(prompt, /never claim a specific vendor or model family that is not configured/);
+  const bare = buildSystemPrompt();
+  assert.ok(!bare.includes('Configured model'));
+  assert.match(bare, /say you do not know/);
+});
+
+test('system prompt restricts scope to TTLAB and requires tool-based connectivity checks', () => {
+  const prompt = buildSystemPrompt();
+  assert.match(prompt, /test connectivity or communication/);
+  assert.match(prompt, /verify it with a read-only tool/);
+  assert.match(prompt, /outside that scope/);
+});
+
 test('approval manager resolves responses and auto-rejects on timeout', async () => {
   const approvals = new ApprovalManager(50, () => undefined);
   const first = approvals.request('s1', 'command_execute', { operation: 'device.reboot' }, 'reboot');
@@ -82,6 +98,21 @@ test('engine streams a plain text reply without tools', async () => {
   assert.equal(messages.filter((message) => message.role === 'user').length, 1);
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.delta' && message.delta === '一切正常。'));
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.done'));
+});
+
+test('engine keeps assistant replies in history so later turns retain context', async () => {
+  const sink = new FakeSink();
+  const approvals = new ApprovalManager(5_000, () => undefined);
+  const { context } = fakeContext(sink, approvals);
+  const engine = new ServerNativeEngine({ llm: queuedLlm([{ content: '第一轮回复。' }, { content: '第二轮回复。' }]) });
+  const afterTurn1 = await engine.runTurn(context, [], '你好');
+  const assistantReplies = afterTurn1.filter((message) => message.role === 'assistant' && message.toolCalls === undefined);
+  assert.equal(assistantReplies.length, 1);
+  assert.equal(assistantReplies[0]?.content, '第一轮回复。');
+  const afterTurn2 = await engine.runTurn(context, afterTurn1, '再问一个');
+  const allReplies = afterTurn2.filter((message) => message.role === 'assistant' && message.toolCalls === undefined);
+  assert.ok(allReplies.some((message) => message.content === '第一轮回复。'));
+  assert.ok(allReplies.some((message) => message.content === '第二轮回复。'));
 });
 
 test('engine runs a tool call and then replies with text', async () => {

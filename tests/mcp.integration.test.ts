@@ -169,13 +169,17 @@ test('TTLAB MCP endpoint exposes device, log, audit, and command tools over HTTP
       return textOf(status).includes('"status":"result"');
     });
 
-    // high-risk operations and updates require approval and are refused
-    const reboot = await callTool(port, 'command_execute', { deviceId: 'tvbox:mcp', operation: 'device.reboot' });
-    assert.equal(toolPayload(reboot).isError, true);
-    assert.ok(textOf(reboot).includes('APPROVAL_REQUIRED'));
+    // high-risk operations and updates dispatch; approval is enforced upstream
+    // by the dsh approval gate, not by the MCP endpoint itself
+    const reboot = await callTool(port, 'command_execute', { deviceId: 'tvbox:mcp', operation: 'device.reboot', parameters: { mode: 'NRM' } });
+    assert.equal(toolPayload(reboot).isError, false);
+    assert.ok(textOf(reboot).includes('"commandId"'));
+    // updates now dispatch (release lookup); no release is uploaded in this test,
+    // so the only failure is the missing release, not APPROVAL_REQUIRED
     const update = await callTool(port, 'client_update', { clientId: 'client-mcp', version: '1.1.0' });
     assert.equal(toolPayload(update).isError, true);
-    assert.ok(textOf(update).includes('APPROVAL_REQUIRED'));
+    assert.ok(textOf(update).includes('RELEASE_NOT_FOUND'));
+    assert.ok(!textOf(update).includes('APPROVAL_REQUIRED'));
 
     // audit records the agent-originated dispatch
     await waitUntil(async () => {

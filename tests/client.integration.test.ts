@@ -17,6 +17,7 @@ import {
 } from '../packages/protocol/src/index.js';
 import { ClientAgent } from '../apps/client/src/agent.js';
 import type { SerialAdapter } from '../apps/client/src/serial.js';
+import type { FirmwareFlasher, FlashContext } from '../apps/client/src/firmware-flasher.js';
 import type { SerialPortInfo } from '../apps/client/src/discovery.js';
 
 const tvBoxDeviceId = 'tvbox:28e9:018a:FAKE';
@@ -52,6 +53,19 @@ class FakeSerialAdapter implements SerialAdapter {
     if (this.gate) await this.gate;
     if (this.failure) return { commandId: request.commandId, deviceId: request.deviceId, success: false, error: this.failure };
     return { commandId: request.commandId, deviceId: request.deviceId, success: true, output: 'PING:OK' };
+  }
+}
+
+class FakeFirmwareFlasher implements FirmwareFlasher {
+  readonly contexts: FlashContext[] = [];
+  failure: { code: string; message: string; retryable: boolean } | undefined;
+  gate: Promise<void> | undefined;
+
+  async flash(context: FlashContext) {
+    this.contexts.push(context);
+    if (this.gate) await this.gate;
+    if (this.failure) return { commandId: context.request.commandId, deviceId: context.request.deviceId, success: false, error: this.failure };
+    return { commandId: context.request.commandId, deviceId: context.request.deviceId, success: true, output: 'flashed V39 (test)' };
   }
 }
 
@@ -138,6 +152,7 @@ interface AgentTestOptions {
   port: number;
   stateDir: string;
   adapter?: SerialAdapter;
+  flasher?: FirmwareFlasher;
   discoverPorts?: () => SerialPortInfo[];
   controlSelector?: string;
   logSelector?: string;
@@ -154,6 +169,7 @@ function startAgent(options: AgentTestOptions): ClientAgent {
     controlSelector: options.controlSelector,
     logSelector: options.logSelector,
     adapter: options.adapter,
+    flasher: options.flasher,
     discoverPorts: options.discoverPorts,
     onSend: options.onSend,
   });
@@ -499,6 +515,84 @@ test('client persists its identity across restarts', async () => {
       }
     } finally {
       await agent1.stop();
+    }
+  } finally {
+    await stopServer(server);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('client flashes firmware end to end: dispatch, download reference, progress and result', async () => {
+  const port = await freePort();
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-client-it-'));
+  const server = startServer(port, { TTLAB_HEARTBEAT_TIMEOUT_MS: '1000', TTLAB_RELEASE_DIR: join(root, 'releases'), TTLAB_PUBLIC_BASE_URL: `http://127.0.0.1:${port}` });
+  try {
+    await waitForOutput(server, (line) => line.includes('server_started'));
+
+    // publish a firmware release on the server
+    const payload = Buffer.from('fake-firmware-binary');
+    const { createHash } = await import('node:crypto');
+    const sha256 = createHash('sha256').update(payload).digest('hex');
+    const upload = await fetch(`http://127.0.0.1:${port}/api/v1/firmware/releases/V39?artifact=test.bin&deviceType=tv-stick-test-box`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: payload });
+    assert.equal(upload.status, 201);
+
+    const adapter = new FakeSerialAdapter();
+    const flasher = new FakeFirmwareFlasher();
+    const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const agent = startAgent({ port, stateDir: join(root, 'state'), discoverPorts: () => [controlPort], controlSelector: controlPort.deviceId, adapter, flasher, onSend: (type, payload) => sent.push({ type, payload: payload as Record<string, unknown> }) });
+    try {
+      await waitClientOnline(port, agent.clientId);
+
+      const dispatch = await postCommand(port, agent.clientId, tvBoxDeviceId, 'firmware.flash', { version: 'V39', artifact: 'test.bin' });
+      assert.equal(dispatch.status, 202);
+      const commandId = (await dispatch.json()).data.commandId as string;
+
+      // the client flasher runs automatically; assert it received the firmware reference
+      await waitUntil(async () => flasher.contexts.length > 0);
+      assert.equal(flasher.contexts[0]?.request.firmware?.release, 'V39');
+      assert.equal(flasher.contexts[0]?.request.firmware?.sha256, sha256);
+      assert.equal(flasher.contexts[0]?.request.firmware?.artifact, 'test.bin');
+
+      await waitUntil(async () => {
+        const status = await commandStatus(port, commandId);
+        return status.status === 'result' || status.status === 'failed';
+      });
+      const status = await commandStatus(port, commandId);
+      assert.equal(status.status, 'result');
+      assert.equal(status.result?.success, true);
+      assert.match(status.result?.output ?? '', /flashed V39/);
+
+      // the client reported accepted then result
+      assert.ok(sent.some((item) => item.type === 'command.accepted' && item.payload.commandId === commandId));
+      assert.ok(sent.some((item) => item.type === 'command.result' && item.payload.commandId === commandId));
+    } finally {
+      await agent.stop();
+    }
+  } finally {
+    await stopServer(server);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('client rejects a firmware.flash command that has no firmware reference', async () => {
+  const port = await freePort();
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-client-it-'));
+  const server = startServer(port, { TTLAB_HEARTBEAT_TIMEOUT_MS: '1000' });
+  try {
+    await waitForOutput(server, (line) => line.includes('server_started'));
+    const flasher = new FakeFirmwareFlasher();
+    const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const agent = startAgent({ port, stateDir: join(root, 'state'), discoverPorts: () => [controlPort], controlSelector: controlPort.deviceId, flasher, onSend: (type, payload) => sent.push({ type, payload: payload as Record<string, unknown> }) });
+    try {
+      await waitClientOnline(port, agent.clientId);
+      const request: CommandRequest = { commandId: 'cmd-no-fw', deviceId: tvBoxDeviceId, operation: 'firmware.flash', parameters: {}, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30_000).toISOString() };
+      agent.receiveCommandExecute(request, 'corr-no-fw');
+      await waitUntil(async () => sent.some((item) => item.type === 'command.failed'));
+      const failed = sent.find((item) => item.type === 'command.failed');
+      assert.equal((failed?.payload as { error?: { code?: string } }).error?.code, 'INVALID_ARGUMENT');
+      assert.equal(flasher.contexts.length, 0);
+    } finally {
+      await agent.stop();
     }
   } finally {
     await stopServer(server);

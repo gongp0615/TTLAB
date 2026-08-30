@@ -50,6 +50,37 @@ test('settings store uses defaults for missing config keys', () => {
     assert.equal(settings.model, 'deepseek-chat');
     assert.equal(settings.apiKey, '');
     assert.equal(settings.llmUrl, 'https://api.deepseek.com');
+    assert.equal(settings.engine, 'server-native');
+    assert.equal(settings.dshBaseUrl, 'http://127.0.0.1:9333');
+    assert.equal(settings.dshWorkdir, './data/agent-work');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('settings store loads and validates the dsh engine config', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-settings-'));
+  const config = join(root, 'server.env');
+  writeFileSync(config, [
+    'TTLAB_AGENT_ENABLED=1',
+    'TTLAB_AGENT_ENGINE=dsh',
+    'TTLAB_DSH_BASE_URL=http://127.0.0.1:9333',
+    'TTLAB_DSH_WORKDIR=./data/agent-work',
+    'TTLAB_DSH_TOKEN=dsh-secret',
+    '',
+  ].join('\n'));
+  try {
+    const store = new SettingsStore(config);
+    const settings = store.get();
+    assert.equal(settings.engine, 'dsh');
+    assert.equal(settings.dshBaseUrl, 'http://127.0.0.1:9333');
+    assert.equal(settings.dshWorkdir, './data/agent-work');
+    assert.equal(settings.dshToken, 'dsh-secret');
+    assert.throws(() => store.update({ engine: 'bogus' as 'server-native' }), SettingsError);
+    assert.throws(() => parseAgentSettingsPatch({ dshBaseUrl: 'not-a-url' }), SettingsError);
+    const updated = store.update({ engine: 'server-native', dshWorkdir: '/srv/dsh' });
+    assert.equal(updated.engine, 'server-native');
+    assert.ok(readFileSync(config, 'utf8').includes('TTLAB_AGENT_ENGINE=server-native'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -146,11 +177,14 @@ test('parseAgentSettingsPatch validates field types', () => {
 });
 
 test('settings view masks secrets', () => {
-  const settings = { enabled: true, model: 'deepseek-chat', llmUrl: 'https://api.deepseek.com', apiKey: 'sk-abcdef1234', agentToken: 'tok', maxSessions: 8, approvalTimeoutMs: 60_000 };
+  const settings = { enabled: true, engine: 'server-native' as const, model: 'deepseek-chat', llmUrl: 'https://api.deepseek.com', apiKey: 'sk-abcdef1234', agentToken: 'tok', dshBaseUrl: 'http://127.0.0.1:9333', dshWorkdir: './data/agent-work', dshToken: 'dsh-tok', maxSessions: 8, approvalTimeoutMs: 60_000 };
   const view = toAgentSettingsView(settings);
   assert.equal(view.apiKeyConfigured, true);
   assert.equal(view.apiKeyHint, '…1234');
   assert.equal(view.agentTokenConfigured, true);
+  assert.equal(view.dshTokenConfigured, true);
+  assert.equal(view.engine, 'server-native');
   assert.equal('apiKey' in view, false);
   assert.equal('agentToken' in view, false);
+  assert.equal('dshToken' in view, false);
 });

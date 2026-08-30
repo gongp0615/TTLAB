@@ -149,6 +149,25 @@
                   <span class="settings-label">Agent Token<span class="settings-hint">dsh/MCP 服务凭据，留空表示不校验</span></span>
                   <input type="password" id="settingAgentToken" placeholder="Bearer Token" autocomplete="new-password" />
                 </label>
+                <label class="settings-field">
+                  <span class="settings-label">引擎<span class="settings-hint">server-native 直连 LLM；dsh 委托 DeepSeek Harness 管理上下文与工具</span></span>
+                  <select id="settingEngine">
+                    <option value="server-native">server-native（内置）</option>
+                    <option value="dsh">dsh（DeepSeek Harness）</option>
+                  </select>
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">dsh 本地 API 地址<span class="settings-hint">dsh web 服务地址，如 http://127.0.0.1:9333</span></span>
+                  <input type="text" id="settingDshBaseUrl" placeholder="http://127.0.0.1:9333" autocomplete="off" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">dsh 工作目录<span class="settings-hint">dsh 会话的 cwd</span></span>
+                  <input type="text" id="settingDshWorkdir" placeholder="./data/agent-work" autocomplete="off" />
+                </label>
+                <label class="settings-field">
+                  <span class="settings-label">dsh Token<span class="settings-hint" id="settingDshTokenState">未配置</span></span>
+                  <input type="password" id="settingDshToken" placeholder="Bearer Token" autocomplete="new-password" />
+                </label>
                 <div class="settings-grid">
                   <label class="settings-field">
                     <span class="settings-label">并发会话数</span>
@@ -165,6 +184,36 @@
                   <button type="submit" class="button button-primary">保存设置</button>
                 </div>
               </form>
+            </article>
+            <article class="panel settings-panel">
+              <div class="panel-header"><h2>固件管理</h2><span class="settings-note">上传 GD32 固件到 Server，供 TV Stick Test Box 刷写使用</span></div>
+              <div class="settings-body">
+                <form id="firmwareUploadForm">
+                  <label class="settings-field">
+                    <span class="settings-label">固件版本<span class="settings-hint">如 V39，唯一且不可覆盖</span></span>
+                    <input type="text" id="firmwareVersion" placeholder="V39" autocomplete="off" required />
+                  </label>
+                  <label class="settings-field">
+                    <span class="settings-label">固件文件<span class="settings-hint">bin 文件，大小上限 1 MiB</span></span>
+                    <input type="file" id="firmwareFile" accept=".bin" required />
+                  </label>
+                  <label class="settings-field">
+                    <span class="settings-label">描述<span class="settings-hint">可选</span></span>
+                    <input type="text" id="firmwareDescription" placeholder="release notes" autocomplete="off" />
+                  </label>
+                  <div class="settings-actions">
+                    <span class="settings-status" id="firmwareStatus"></span>
+                    <button type="button" class="plain-button" id="firmwareRefresh">刷新列表</button>
+                    <button type="submit" class="button button-primary">上传固件</button>
+                  </div>
+                </form>
+                <div class="firmware-table-wrap">
+                  <table class="firmware-table">
+                    <thead><tr><th>版本</th><th>固件文件</th><th>大小</th><th>SHA-256</th><th>发布时间</th><th>描述</th></tr></thead>
+                    <tbody id="firmwareTableBody"><tr><td colspan="6"><span class="empty-state">加载固件列表...</span></td></tr></tbody>
+                  </table>
+                </div>
+              </div>
             </article>
           </div>
         </section>

@@ -12,7 +12,7 @@ function fakeContext(): McpServerContext {
     queryLogs: async () => ({ data: [{ ts: '2026-08-29T00:00:00.000Z', type: 'device', clientId: 'client-1', deviceId: 'tvbox:1', data: { sequence: 1 } }], hasMore: false, nextOffset: 0, truncated: false }),
     queryAudit: async () => ({ data: [], hasMore: false, nextOffset: 0, truncated: false }),
     getCommandStatus: (commandId) => (commandId === 'cmd-1' ? { commandId, status: 'dispatched' } : undefined),
-    dispatchCommand: (input) => (input.operation === 'system.ping' ? { ok: true, commandId: 'cmd-new' } : { ok: false, error: { code: 'UNSUPPORTED_OPERATION', message: 'operation is not enabled', retryable: false } }),
+    dispatchCommand: (input) => (input.operation === 'system.ping' || input.operation === 'device.reboot' ? { ok: true, commandId: 'cmd-new' } : { ok: false, error: { code: 'UNSUPPORTED_OPERATION', message: 'operation is not enabled', retryable: false } }),
     dispatchUpdate: (input) => (input.version === '1.1.0' ? { ok: true, updateId: 'upd-1', version: input.version } : { ok: false, error: { code: 'RELEASE_NOT_FOUND', message: 'release not found', retryable: false } }),
   };
 }
@@ -69,7 +69,7 @@ test('tools/call rejects unknown tools and invalid arguments', async () => {
   assert.equal(extra.error.code, -32602);
 });
 
-test('command.execute dispatches low-risk operations and blocks high-risk ones', async () => {
+test('command.execute dispatches both low-risk and high-risk operations (approval enforced upstream by the dsh gate)', async () => {
   const server = await initializedServer();
   const lowRisk = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'system.ping' } } }) as JsonRpcResponse;
   const lowPayload = lowRisk.result as { content: Array<{ text: string }>; isError: boolean };
@@ -78,13 +78,13 @@ test('command.execute dispatches low-risk operations and blocks high-risk ones',
 
   const highRisk = await server.handle({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } } }) as JsonRpcResponse;
   const highPayload = highRisk.result as { content: Array<{ text: string }>; isError: boolean };
-  assert.equal(highPayload.isError, true);
-  assert.ok(highPayload.content[0]?.text.includes('APPROVAL_REQUIRED'));
+  assert.equal(highPayload.isError, false);
+  assert.ok(highPayload.content[0]?.text.includes('cmd-new'));
 
   const update = await server.handle({ jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'client_update', arguments: { clientId: 'client-1', version: '1.1.0' } } }) as JsonRpcResponse;
   const updatePayload = update.result as { content: Array<{ text: string }>; isError: boolean };
-  assert.equal(updatePayload.isError, true);
-  assert.ok(updatePayload.content[0]?.text.includes('APPROVAL_REQUIRED'));
+  assert.equal(updatePayload.isError, false);
+  assert.ok(updatePayload.content[0]?.text.includes('dispatched'));
 });
 
 test('log.query and audit.query return query results', async () => {

@@ -2,25 +2,30 @@ import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   message,
   parseClientHello,
   parseClientSnapshot,
+  parseCommandProgress,
   parseCommandResult,
   parseDeviceLogChunk,
   parseEnvelope,
   validateCommandParameters,
   type ClientHello,
   type ClientSnapshot,
+  type CommandProgress,
   type CommandRequest,
   type DeviceLogChunk,
   type Envelope,
   type UpdateManifest,
 } from '../../../packages/protocol/src/index.js';
 import { LogStore, parseAuditQuery, parseLogQuery, type LogEntry } from './logstore/index.js';
+import { FirmwareStore, FirmwareStoreError } from './firmware.js';
 import { McpServer, type McpServerContext } from './mcp/index.js';
-import { AgentGateway, ApprovalManager, DeepSeekApiClient, ServerNativeEngine } from './agent-gateway/index.js';
+import { AgentGateway, ApprovalManager, DeepSeekApiClient, DshEngine, ServerNativeEngine, ServerNativeEngineAdapter, buildSystemPrompt, type AgentEngine } from './agent-gateway/index.js';
 import { SettingsStore, parseAgentSettingsPatch, toAgentSettingsView } from './settings/index.js';
 
 function loadConfigFile(file: string): void {
@@ -44,7 +49,8 @@ const port = Number(process.env.TTLAB_SERVER_PORT ?? 9000);
 const heartbeatTimeoutMs = Number(process.env.TTLAB_HEARTBEAT_TIMEOUT_MS ?? 30_000);
 const configuredTokens = parseTokens(process.env.TTLAB_CLIENT_TOKENS ?? '');
 const clientAuthEnabled = process.env.TTLAB_CLIENT_AUTH_ENABLED === '1';
-const releaseDirectory = process.env.TTLAB_RELEASE_DIR ?? './releases';
+const releaseDirectory = process.env.TTLAB_RELEASE_DIR ?? join(homedir(), '.local/state/ttlab-server/releases');
+const firmwareMaxBytes = Number(process.env.TTLAB_FIRMWARE_MAX_BYTES ?? 1024 * 1024);
 const tlsKeyFile = process.env.TTLAB_TLS_KEY_FILE;
 const tlsCertFile = process.env.TTLAB_TLS_CERT_FILE;
 const tlsRequired = process.env.TTLAB_TLS_REQUIRED === '1';
@@ -61,8 +67,9 @@ const logMaxScanBytes = Number(process.env.TTLAB_LOG_MAX_SCAN_BYTES ?? 64 * 1024
 const settingsStore = new SettingsStore(process.env.TTLAB_CONFIG_FILE ?? './server.env');
 const supportedOperations = new Set([
   'hdmi.switch', 'hdmi.status', 'usb.path', 'usb.status', 'system.ping', 'system.version',
-  'system.reset', 'device.reboot', 'hardware.rgb', 'hardware.lcd',
+  'system.reset', 'device.reboot', 'hardware.rgb', 'hardware.lcd', 'firmware.flash',
 ]);
+const firmwareStore = new FirmwareStore({ directory: releaseDirectory, maxBytes: firmwareMaxBytes });
 
 interface RuntimeClient {
   clientId: string;
@@ -75,7 +82,7 @@ interface RuntimeClient {
 }
 
 const clients = new Map<string, RuntimeClient>();
-const commands = new Map<string, { request: CommandRequest; status: string; createdAt: string; result?: unknown }>();
+const commands = new Map<string, { request: CommandRequest; status: string; createdAt: string; progress?: CommandProgress; result?: unknown }>();
 const logStore = new LogStore({
   directory: logDirectory,
   flushIntervalMs: logFlushMs,
@@ -244,14 +251,39 @@ function dispatchCommand(input: { clientId?: string; deviceId: string; operation
     return { ok: false, error: { code: 'DEVICE_OFFLINE', message: 'device is not in the client snapshot', retryable: true } };
   }
   const now = Date.now();
+  const expiresAt = new Date(now + (input.operation === 'firmware.flash' ? 10 * 60 * 1000 : 30_000)).toISOString();
   const command: CommandRequest = {
     commandId: `cmd_${randomUUID()}`,
     deviceId: input.deviceId,
     operation: input.operation,
     parameters: input.parameters,
     issuedAt: new Date(now).toISOString(),
-    expiresAt: new Date(now + 30_000).toISOString(),
+    expiresAt,
   };
+  if (input.operation === 'firmware.flash') {
+    const version = input.parameters.version;
+    const artifact = input.parameters.artifact;
+    if (!version || !artifact) {
+      return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware version and artifact are required', retryable: false } };
+    }
+    const manifest = firmwareStore.read(version);
+    if (!manifest) {
+      return { ok: false, error: { code: 'RELEASE_NOT_FOUND', message: 'firmware release not found', retryable: false } };
+    }
+    if (manifest.artifact !== artifact) {
+      return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware artifact does not match the release', retryable: false } };
+    }
+    if (managedDevice !== undefined && manifest.deviceType !== managedDevice.deviceType) {
+      return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware does not match the device type', retryable: false } };
+    }
+    command.firmware = {
+      release: manifest.version,
+      artifact: manifest.artifact,
+      downloadUrl: `${publicBaseUrl}/agent/v1/releases/${encodeURIComponent(manifest.version)}/${encodeURIComponent(manifest.artifact)}?clientId=${encodeURIComponent(clientId)}`,
+      sha256: manifest.sha256,
+      expiresAt: new Date(now + 60 * 60 * 1000).toISOString(),
+    };
+  }
   commands.set(command.commandId, { request: command, status: 'dispatched', createdAt: new Date(now).toISOString() });
   logCommandState(clientId, { commandId: command.commandId, deviceId: command.deviceId }, 'dispatched', command, undefined);
   writeAudit({
@@ -260,7 +292,7 @@ function dispatchCommand(input: { clientId?: string; deviceId: string; operation
     deviceId: command.deviceId,
     commandId: command.commandId,
     action: 'command.dispatch',
-    detail: { operation: command.operation, parameters: command.parameters },
+    detail: { operation: command.operation, parameters: command.parameters, ...(command.firmware !== undefined ? { firmware: { release: command.firmware.release, artifact: command.firmware.artifact, sha256: command.firmware.sha256 } } : {}) },
   });
   client.socket.send(JSON.stringify(message('command.execute', command, clientId)));
   return { ok: true, commandId: command.commandId };
@@ -317,14 +349,26 @@ function writeAgentEntry(sessionId: string, detail: Record<string, unknown>): vo
   logStore.write({ ts: new Date().toISOString(), type: 'agent', sessionId, data: detail });
 }
 
+const agentEngine: AgentEngine = settingsStore.get().engine === 'dsh'
+  ? new DshEngine({
+      baseUrl: () => settingsStore.get().dshBaseUrl,
+      token: () => settingsStore.get().dshToken || undefined,
+      workdir: () => settingsStore.get().dshWorkdir,
+      approvalTimeoutMs: () => settingsStore.get().approvalTimeoutMs,
+    })
+  : new ServerNativeEngineAdapter(
+      new ServerNativeEngine({
+        llm: new DeepSeekApiClient({
+          baseUrl: () => settingsStore.get().llmUrl,
+          apiKey: () => settingsStore.get().apiKey || undefined,
+          model: () => settingsStore.get().model,
+        }),
+      }),
+      () => buildSystemPrompt(settingsStore.get().model),
+    );
+
 const agentGateway = new AgentGateway({
-  engine: new ServerNativeEngine({
-    llm: new DeepSeekApiClient({
-      baseUrl: () => settingsStore.get().llmUrl,
-      apiKey: () => settingsStore.get().apiKey || undefined,
-      model: () => settingsStore.get().model,
-    }),
-  }),
+  engine: agentEngine,
   approvals: new ApprovalManager(() => settingsStore.get().approvalTimeoutMs, (approval) => {
     writeAudit({ actor: `agent:${approval.sessionId}`, action: 'approval.timeout', detail: { approvalId: approval.approvalId, tool: approval.tool, args: approval.args } });
   }),
@@ -454,16 +498,60 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
     if (request.method === 'GET' && releaseMatch) {
       const version = decodeURIComponent(releaseMatch[1] ?? '');
       const artifact = decodeURIComponent(releaseMatch[2] ?? '');
-      const manifest = readManifest(version);
-      const artifactPath = `${releaseDirectory}/${version}/${artifact}`;
       const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
       const clientId = url.searchParams.get('clientId');
-      if (!isSafeSegment(artifact) || !manifest || !existsSync(artifactPath) || manifest.artifact !== artifact || !clientId || (clientAuthEnabled && configuredTokens.get(clientId) !== token)) {
+      if (!isSafeSegment(artifact) || !clientId || (clientAuthEnabled && configuredTokens.get(clientId) !== token)) {
+        json(response, 404, { error: { code: 'RELEASE_NOT_FOUND', message: 'release not found', retryable: false } });
+        return;
+      }
+      const firmwarePath = firmwareStore.artifactPath(version, artifact);
+      if (firmwarePath) {
+        response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
+        createReadStream(firmwarePath).pipe(response);
+        return;
+      }
+      const manifest = readManifest(version);
+      const artifactPath = `${releaseDirectory}/${version}/${artifact}`;
+      if (!manifest || !existsSync(artifactPath) || manifest.artifact !== artifact) {
         json(response, 404, { error: { code: 'RELEASE_NOT_FOUND', message: 'release not found', retryable: false } });
         return;
       }
       response.writeHead(200, { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' });
       createReadStream(artifactPath).pipe(response);
+      return;
+    }
+    const firmwareUploadMatch = url.pathname.match(/^\/api\/v1\/firmware\/releases\/([^/]+)$/);
+    if (request.method === 'POST' && firmwareUploadMatch) {
+      const version = decodeURIComponent(firmwareUploadMatch[1] ?? '');
+      const artifact = url.searchParams.get('artifact');
+      const description = url.searchParams.get('description') ?? undefined;
+      const deviceType = url.searchParams.get('deviceType') ?? undefined;
+      if (!artifact) {
+        json(response, 400, { error: { code: 'INVALID_ARGUMENT', message: 'artifact query parameter is required', retryable: false } });
+        return;
+      }
+      try {
+        const manifest = await firmwareStore.publish({
+          version,
+          artifact,
+          ...(description !== undefined ? { description } : {}),
+          ...(deviceType !== undefined ? { deviceType } : {}),
+          body: request,
+        });
+        writeAudit({ actor: 'anonymous', action: 'firmware.release.published', detail: { version: manifest.version, artifact: manifest.artifact, sha256: manifest.sha256, size: manifest.size } });
+        json(response, 201, { data: manifest });
+      } catch (error) {
+        if (error instanceof FirmwareStoreError) {
+          const status = error.code === 'ALREADY_EXISTS' ? 409 : error.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400;
+          json(response, status, { error: { code: error.code, message: error.message, retryable: error.retryable } });
+          return;
+        }
+        json(response, 400, { error: { code: 'INVALID_REQUEST', message: error instanceof Error ? error.message : 'invalid request', retryable: false } });
+      }
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/firmware/releases') {
+      json(response, 200, { data: firmwareStore.list() });
       return;
     }
     const commandMatch = url.pathname.match(/^\/api\/v1\/clients\/([^/]+)\/commands$/);
@@ -495,7 +583,7 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
         json(response, 404, { error: { code: 'COMMAND_NOT_FOUND', message: 'command not found', retryable: false } });
         return;
       }
-      json(response, 200, { data: { commandId, status: command.status, createdAt: command.createdAt, result: command.result } });
+      json(response, 200, { data: { commandId, status: command.status, createdAt: command.createdAt, progress: command.progress, result: command.result } });
       return;
     }
     const updateMatch = url.pathname.match(/^\/api\/v1\/clients\/([^/]+)\/update$/);
@@ -600,6 +688,10 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
         let result: unknown;
         if (command) {
           command.status = envelope.type.slice('command.'.length);
+          if (envelope.type === 'command.progress') {
+            command.progress = parseCommandProgress(envelope.payload);
+            broadcastState(runtime);
+          }
           if (envelope.type === 'command.result' || envelope.type === 'command.failed') {
             command.result = parseCommandResult(envelope.payload);
             result = command.result;

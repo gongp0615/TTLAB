@@ -2,33 +2,45 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 export interface AgentSettings {
   enabled: boolean;
+  engine: 'server-native' | 'dsh';
   model: string;
   llmUrl: string;
   apiKey: string;
   agentToken: string;
+  dshBaseUrl: string;
+  dshWorkdir: string;
+  dshToken: string;
   maxSessions: number;
   approvalTimeoutMs: number;
 }
 
 export interface AgentSettingsView {
   enabled: boolean;
+  engine: 'server-native' | 'dsh';
   model: string;
   llmUrl: string;
   maxSessions: number;
   approvalTimeoutMs: number;
+  dshBaseUrl: string;
+  dshWorkdir: string;
   apiKeyConfigured: boolean;
   apiKeyHint: string;
   agentTokenConfigured: boolean;
+  dshTokenConfigured: boolean;
 }
 
 export interface AgentSettingsPatch {
   enabled?: boolean;
+  engine?: 'server-native' | 'dsh';
   model?: string;
   llmUrl?: string;
   maxSessions?: number;
   approvalTimeoutMs?: number;
   apiKey?: string;
   agentToken?: string;
+  dshBaseUrl?: string;
+  dshWorkdir?: string;
+  dshToken?: string;
 }
 
 export class SettingsError extends Error {}
@@ -38,10 +50,14 @@ const MAX_APPROVAL_TIMEOUT_MS = 3_600_000;
 
 const agentConfigKeys = [
   ['enabled', 'TTLAB_AGENT_ENABLED'],
+  ['engine', 'TTLAB_AGENT_ENGINE'],
   ['model', 'TTLAB_AGENT_MODEL'],
   ['llmUrl', 'TTLAB_AGENT_LLM_URL'],
   ['apiKey', 'TTLAB_DEEPSEEK_API_KEY'],
   ['agentToken', 'TTLAB_AGENT_TOKEN'],
+  ['dshBaseUrl', 'TTLAB_DSH_BASE_URL'],
+  ['dshWorkdir', 'TTLAB_DSH_WORKDIR'],
+  ['dshToken', 'TTLAB_DSH_TOKEN'],
   ['maxSessions', 'TTLAB_AGENT_MAX_SESSIONS'],
   ['approvalTimeoutMs', 'TTLAB_AGENT_APPROVAL_TIMEOUT_MS'],
 ] as const;
@@ -56,10 +72,14 @@ function unquote(value: string): string {
 export function defaultAgentSettings(): AgentSettings {
   return {
     enabled: false,
+    engine: 'server-native',
     model: 'deepseek-chat',
     llmUrl: 'https://api.deepseek.com',
     apiKey: '',
     agentToken: '',
+    dshBaseUrl: 'http://127.0.0.1:9333',
+    dshWorkdir: './data/agent-work',
+    dshToken: '',
     maxSessions: 8,
     approvalTimeoutMs: 60_000,
   };
@@ -72,6 +92,10 @@ export function parseAgentSettingsPatch(value: unknown): AgentSettingsPatch {
   if ('enabled' in record) {
     if (typeof record.enabled !== 'boolean') throw new SettingsError('enabled must be a boolean');
     patch.enabled = record.enabled;
+  }
+  if ('engine' in record) {
+    if (record.engine !== 'server-native' && record.engine !== 'dsh') throw new SettingsError('engine must be "server-native" or "dsh"');
+    patch.engine = record.engine;
   }
   if ('model' in record) {
     if (typeof record.model !== 'string' || record.model.trim().length === 0) throw new SettingsError('model must be a non-empty string');
@@ -91,6 +115,20 @@ export function parseAgentSettingsPatch(value: unknown): AgentSettingsPatch {
     if (typeof record.agentToken !== 'string') throw new SettingsError('agentToken must be a string');
     patch.agentToken = record.agentToken.trim();
   }
+  if ('dshBaseUrl' in record) {
+    if (typeof record.dshBaseUrl !== 'string') throw new SettingsError('dshBaseUrl must be a string');
+    const trimmed = record.dshBaseUrl.trim();
+    if (trimmed.length > 0 && !/^https?:\/\//.test(trimmed)) throw new SettingsError('dshBaseUrl must start with http:// or https://');
+    patch.dshBaseUrl = trimmed;
+  }
+  if ('dshWorkdir' in record) {
+    if (typeof record.dshWorkdir !== 'string') throw new SettingsError('dshWorkdir must be a string');
+    patch.dshWorkdir = record.dshWorkdir.trim();
+  }
+  if ('dshToken' in record) {
+    if (typeof record.dshToken !== 'string') throw new SettingsError('dshToken must be a string');
+    patch.dshToken = record.dshToken.trim();
+  }
   if ('maxSessions' in record) {
     if (!Number.isInteger(record.maxSessions) || (record.maxSessions as number) < 1 || (record.maxSessions as number) > MAX_SESSIONS_LIMIT) {
       throw new SettingsError(`maxSessions must be an integer between 1 and ${MAX_SESSIONS_LIMIT}`);
@@ -108,10 +146,14 @@ export function parseAgentSettingsPatch(value: unknown): AgentSettingsPatch {
 
 export function validateAgentSettings(settings: AgentSettings): void {
   if (typeof settings.enabled !== 'boolean') throw new SettingsError('enabled must be a boolean');
+  if (settings.engine !== 'server-native' && settings.engine !== 'dsh') throw new SettingsError('engine must be "server-native" or "dsh"');
   if (typeof settings.model !== 'string' || settings.model.trim().length === 0) throw new SettingsError('model must be a non-empty string');
   if (typeof settings.llmUrl !== 'string') throw new SettingsError('llmUrl must be a string');
   if (typeof settings.apiKey !== 'string') throw new SettingsError('apiKey must be a string');
   if (typeof settings.agentToken !== 'string') throw new SettingsError('agentToken must be a string');
+  if (typeof settings.dshBaseUrl !== 'string') throw new SettingsError('dshBaseUrl must be a string');
+  if (typeof settings.dshWorkdir !== 'string') throw new SettingsError('dshWorkdir must be a string');
+  if (typeof settings.dshToken !== 'string') throw new SettingsError('dshToken must be a string');
   if (!Number.isInteger(settings.maxSessions) || settings.maxSessions < 1 || settings.maxSessions > MAX_SESSIONS_LIMIT) throw new SettingsError('invalid maxSessions');
   if (!Number.isInteger(settings.approvalTimeoutMs) || settings.approvalTimeoutMs < 1000 || settings.approvalTimeoutMs > MAX_APPROVAL_TIMEOUT_MS) throw new SettingsError('invalid approvalTimeoutMs');
 }
@@ -119,13 +161,17 @@ export function validateAgentSettings(settings: AgentSettings): void {
 export function toAgentSettingsView(settings: AgentSettings): AgentSettingsView {
   return {
     enabled: settings.enabled,
+    engine: settings.engine,
     model: settings.model,
     llmUrl: settings.llmUrl,
     maxSessions: settings.maxSessions,
     approvalTimeoutMs: settings.approvalTimeoutMs,
+    dshBaseUrl: settings.dshBaseUrl,
+    dshWorkdir: settings.dshWorkdir,
     apiKeyConfigured: settings.apiKey.length > 0,
     apiKeyHint: settings.apiKey.length > 4 ? `…${settings.apiKey.slice(-4)}` : '',
     agentTokenConfigured: settings.agentToken.length > 0,
+    dshTokenConfigured: settings.dshToken.length > 0,
   };
 }
 
@@ -191,6 +237,9 @@ export class SettingsStore {
       case 'enabled':
         settings.enabled = value === '1';
         break;
+      case 'engine':
+        if (value === 'server-native' || value === 'dsh') settings.engine = value;
+        break;
       case 'model':
         settings.model = value;
         break;
@@ -202,6 +251,15 @@ export class SettingsStore {
         break;
       case 'agentToken':
         settings.agentToken = value;
+        break;
+      case 'dshBaseUrl':
+        settings.dshBaseUrl = value;
+        break;
+      case 'dshWorkdir':
+        settings.dshWorkdir = value;
+        break;
+      case 'dshToken':
+        settings.dshToken = value;
         break;
       case 'maxSessions': {
         const parsed = Number(value);

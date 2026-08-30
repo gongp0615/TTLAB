@@ -49,7 +49,10 @@ export class ServerNativeEngine {
       const toolCalls = response.toolCalls;
       if (toolCalls === undefined || toolCalls.length === 0) {
         const content = response.content ?? '';
-        if (content) context.sink.send({ type: 'agent.message.delta', sessionId: context.sessionId, delta: content });
+        if (content) {
+          history.push({ role: 'assistant', content });
+          context.sink.send({ type: 'agent.message.delta', sessionId: context.sessionId, delta: content });
+        }
         context.sink.send({ type: 'agent.message.done', sessionId: context.sessionId });
         return history;
       }

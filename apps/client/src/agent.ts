@@ -16,6 +16,7 @@ import {
   type UpdateRequest,
 } from '../../../packages/protocol/src/index.js';
 import { TvStickTestBoxAdapter, type SerialAdapter } from './serial.js';
+import { UsbDfuFlasher, type FirmwareFlasher } from './firmware-flasher.js';
 import { DeviceCommandExecutor } from './executor.js';
 import { DeviceManager } from './device-manager.js';
 import type { SerialPortInfo } from './discovery.js';
@@ -41,6 +42,7 @@ export interface ClientAgentOptions {
   logSelector?: string | undefined;
   probeEnabled?: boolean | undefined;
   adapter?: SerialAdapter | undefined;
+  flasher?: FirmwareFlasher | undefined;
   discoverPorts?: (() => SerialPortInfo[]) | undefined;
   updaterSocket?: string | undefined;
   onSend?: ((type: MessageType, payload: unknown, correlationId?: string | undefined) => void) | undefined;
@@ -51,6 +53,7 @@ export interface ClientAgentOptions {
 export class ClientAgent {
   private readonly options: ClientAgentOptions;
   private readonly adapter: SerialAdapter;
+  private readonly flasher: FirmwareFlasher;
   private readonly commandExecutor = new DeviceCommandExecutor();
   private readonly deviceManager: DeviceManager;
   private readonly bootIdValue = `boot-${randomUUID()}`;
@@ -72,6 +75,7 @@ export class ClientAgent {
     this.heartbeatIntervalMs = options.heartbeatMs ?? 10_000;
     this.refreshIntervalMs = options.refreshIntervalMs ?? 5_000;
     this.adapter = options.adapter ?? new TvStickTestBoxAdapter(options.serialTimeoutMs ?? 3000);
+    this.flasher = options.flasher ?? new UsbDfuFlasher({ stateDirectory: options.stateDirectory, ...(options.token ? { token: options.token } : {}) });
     this.deviceManager = new DeviceManager({
       stateDirectory: options.stateDirectory,
       controlSelector: options.controlSelector,
@@ -177,7 +181,7 @@ export class ClientAgent {
         bootId: this.bootIdValue,
         platform: platform(),
         architecture: arch(),
-        capabilities: ['serial'],
+        capabilities: ['serial', 'firmware-flash'],
         hostname: osHostname(),
         addresses: collectAddresses(),
       });
@@ -221,6 +225,34 @@ export class ClientAgent {
       return;
     }
     this.send('command.accepted', { commandId: raw.commandId, deviceId: raw.deviceId }, correlationId);
+    if (raw.operation === 'firmware.flash') {
+      if (!raw.firmware) {
+        this.send('command.failed', { commandId: raw.commandId, deviceId: raw.deviceId, success: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware download reference is missing', retryable: false } }, correlationId);
+        return;
+      }
+      if (!this.commandExecutor.acquire(raw.deviceId, raw.commandId)) {
+        this.send('command.failed', { commandId: raw.commandId, deviceId: raw.deviceId, success: false, error: { code: 'SERIAL_BUSY', message: 'another serial command is running for this device', retryable: true } }, correlationId);
+        return;
+      }
+      const reportProgress = (stage: 'downloading' | 'verifying' | 'entering-dfu' | 'waiting-for-dfu' | 'flashing' | 'verifying-flash' | 'restarting' | 'verifying-firmware', progress: number, message?: string) => {
+        this.send('command.progress', { commandId: raw.commandId, deviceId: raw.deviceId, stage, progress, ...(message !== undefined ? { message } : {}) }, correlationId);
+      };
+      try {
+        const result = await this.flasher.flash({
+          request: raw,
+          device: target.device,
+          port: { ...target.port, deviceId: raw.deviceId },
+          adapter: this.adapter,
+          deviceManager: this.deviceManager,
+          reportProgress,
+        });
+        this.send(result.success ? 'command.result' : 'command.failed', result, correlationId);
+      } finally {
+        this.commandExecutor.release(raw.deviceId);
+        this.send('client.snapshot', this.snapshot());
+      }
+      return;
+    }
     const result = await this.commandExecutor.execute(raw, { ...target.port, deviceId: raw.deviceId }, this.adapter);
     this.send(result.success ? 'command.result' : 'command.failed', result, correlationId);
     this.send('client.snapshot', this.snapshot());

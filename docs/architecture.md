@@ -41,8 +41,9 @@ Web
 - 主动连接 Server，执行注册、心跳、重连和同步。
 - 发现串口设备并上报稳定硬件身份。
 - 串行执行同一串口上的操作。
-- 通过独立 Updater 完成下载、验签、安装、重启和回滚。
+- 通过独立 Updater 完成下载、验签、安装、重启和回滚（Updater 只负责 Client 自身升级）。
 - 通过设备类型注册表聚合串口、识别端口角色，并分别管理控制通道和日志通道。
+- 通过可插拔 `FirmwareFlasher` 完成设备固件刷写（默认 `UsbDfuFlasher` 调用 `dfu-util`），与 Updater 完全隔离：不触碰 updater socket、不验 Ed25519 签名、不切换 `current` 软链。
 
 ## 3. 首版本状态恢复
 

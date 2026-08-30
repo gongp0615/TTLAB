@@ -9,6 +9,7 @@
 - 同一串口并发指令互斥。
 - 过期指令、重复指令、权限不足和设备离线。
 - 更新下载失败、Hash 错误、签名错误、启动失败和自动回滚。
+- 固件刷写：上传校验、下载 SHA-256 不匹配、DFU 等待超时、刷写失败重试、回读校验、设备卡在 DFU 的恢复指引。
 - Linux 开机后 Client 自动启动和异常退出自动拉起。
 
 ## 2. 测试层级
@@ -29,6 +30,7 @@
 - HTTPS/WSS 健康检查，以及 Client 认证关闭/开启两种握手模式。
 - Updater 的 Hash/签名前置校验、平台/架构/最低协议版本、自检失败和健康检查失败回滚。
 - Test Box 的硬件特征聚合、控制口/日志口绑定和日志事件边界校验。
+- 固件刷写（`tests/server-firmware.test.ts`、`tests/firmware-flasher.test.ts`、`tests/client.integration.test.ts`）：固件上传/列表/下载端点鉴权、manifest 校验、`firmware.flash` 下发含下载引用与 10 分钟过期、`command.progress` 阶段回传；`UsbDfuFlasher` 用 mock `dfu-util` 覆盖全流程、SHA-256 不匹配、DFU 等待超时、刷写失败重试、回读校验、设备卡 DFU；`FakeFirmwareFlasher` 注入 ClientAgent 走 Server 全链路。
 
 真实串口设备不可用时，必须使用可控的 Fake Serial Adapter，不得跳过串口测试。
 

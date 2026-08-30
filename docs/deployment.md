@@ -128,7 +128,7 @@ Server 额外配置项：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `TTLAB_RELEASE_DIR` | `/srv/ttlab/releases` | Client 发布包与固件存储根目录；固件位于其 `firmware/<version>/` 子目录 |
+| `TTLAB_RELEASE_DIR` | `~/.local/state/ttlab-server/releases` | Client 发布包与固件存储根目录；固件位于其 `firmware/<version>/` 子目录。默认取运行用户家目录下的用户状态目录，部署时为 `ttlab-server` 用户、调试时为当前用户，各自可写无需 root |
 | `TTLAB_FIRMWARE_MAX_BYTES` | 1048576 (1 MiB) | 固件上传大小上限 |
 
 ### 2.1 部署 dsh 引擎（可选）
@@ -159,12 +159,18 @@ Restart=on-failure
 RestartSec=3
 ```
 
+dsh web profile 配置（`~/.dsh/profiles/web/`）：除官方 web profile 外，还需在 `cordis.patch.yml` 中：
+
+- 挂载 TTLAB MCP：`@deepseek-ai/dsh-mcp-client`，`serverName: ttlab`，`url: http://127.0.0.1:9000/mcp/v1`。
+- 挂载 `@deepseek-ai/dsh-tool-ask-user`（审批兜底）。
+- 复制 `scripts/dsh/ttlab-approval-gate.js` 到 profile 目录并挂载（高风险 TTLAB 工具审批门：在工具调用到达 MCP 前经 dsh 审批服务确认）。
+
 然后在 `/etc/ttlab/server.env` 设置：
 
 ```ini
 TTLAB_AGENT_ENGINE=dsh
 TTLAB_DSH_BASE_URL=http://127.0.0.1:9333
-TTLAB_DSH_WORKDIR=/srv/ttlab/agent-work
+TTLAB_DSH_WORKDIR=./data/agent-work
 ```
 
 `TTLAB_DSH_WORKDIR` 目录需确保 `ttlab-server` 用户可写。dsh 接入的完整设计见 [agent-integration.md](agent-integration.md)。

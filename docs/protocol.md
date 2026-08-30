@@ -101,11 +101,47 @@ Server 向 Client 发送 `command.execute`：
 }
 ```
 
+固件刷写指令（`firmware.flash`）额外携带固件下载引用，二进制固件不经过 WebSocket 消息，Client 通过 `downloadUrl` 下载：
+
+```json
+{
+  "commandId": "cmd_01J...",
+  "deviceId": "tvbox:...",
+  "operation": "firmware.flash",
+  "parameters": {"version": "V39", "artifact": "Panda_COM-V39-release.bin"},
+  "issuedAt": "2026-08-28T10:00:00Z",
+  "expiresAt": "2026-08-28T10:10:00Z",
+  "firmware": {
+    "release": "V39",
+    "artifact": "Panda_COM-V39-release.bin",
+    "downloadUrl": "/agent/v1/releases/V39/Panda_COM-V39-release.bin?clientId=client-001",
+    "sha256": "<64 位 hex>",
+    "expiresAt": "2026-08-28T11:00:00Z"
+  }
+}
+```
+
+刷机是分钟级操作，`expiresAt` 为 10 分钟（普通指令 30 秒）。
+
 Client 依次返回：
 
 - `command.accepted`
 - `command.progress`，可选
 - `command.result` 或 `command.failed`
+
+`command.progress` 用于刷机等长任务的过程反馈：
+
+```json
+{
+  "commandId": "cmd_01J...",
+  "deviceId": "tvbox:...",
+  "stage": "flashing",
+  "progress": 42,
+  "message": "writing flash"
+}
+```
+
+`stage` 取值：`downloading`、`verifying`、`entering-dfu`、`waiting-for-dfu`、`flashing`、`verifying-flash`、`restarting`、`verifying-firmware`；`progress` 为 0-100 整数。
 
 Server 重启后遗失的指令不能自动重放。Client 对过期、未知设备、设备离线、参数非法和串口占用的指令必须返回明确错误码。
 
@@ -125,6 +161,16 @@ Server 发送 `client.update`：
 ```
 
 Client 使用 `update.progress`、`update.completed` 或 `update.failed` 报告结果。更新状态必须能在 Server 重启后通过 Client 重新上报。
+
+## 5.1 固件管理 API
+
+固件镜像由 Server 统一管理，存储于 `<TTLAB_RELEASE_DIR>/firmware/<version>/`（与 Client 发布包目录 `releases/<version>/` 隔离）。
+
+- `POST /api/v1/firmware/releases/:version?artifact=<name>&description=<urlencoded>&deviceType=<type>`：上传固件，body 为原始二进制（`application/octet-stream`）。已存在返回 409，超限返回 413。
+- `GET /api/v1/firmware/releases`：固件列表 `[{version, artifact, sha256, size, deviceType, releasedAt, description}]`。
+- `GET /agent/v1/releases/:version/:artifact?clientId=<id>`：固件下载，与 Client 发布包下载共用端点，先查 firmware 目录再回退 release 目录；需要 clientId（开启认证时还需 Bearer token）。
+
+固件下载引用由 Server 在 `firmware.flash` 指令中构造，Client 校验 SHA-256 后进入 DFU 刷写。
 
 ## 6. 错误格式
 
