@@ -213,10 +213,12 @@ Server:       ws://127.0.0.1:9000/agent/v1/session
 
 脚本运行当前仓库构建结果，不安装 systemd，不复制到 `/opt`，日志直接输出到当前终端。
 
-可以覆盖 Server 地址：
+需要连接其他 Server 时，编辑配置文件 `$HOME/.local/state/ttlab-client/client.json` 的 `serverUrl` 字段：
 
-```bash
-TTLAB_SERVER_URL=ws://192.168.1.100/agent/v1/session ./scripts/start-client.sh
+```json
+{
+  "serverUrl": "ws://192.168.1.100/agent/v1/session"
+}
 ```
 
 Client 的实际入口是：
@@ -350,16 +352,19 @@ AT+PING?
 控制口识别结果会写入：
 
 ```text
-<TTLAB_STATE_DIR>/device-bindings.json
+<stateDirectory>/device-bindings.json
 ```
+
+`stateDirectory` 默认 `/var/lib/ttlab-client`（开发模式为 `~/.local/state/ttlab-client`），见 `client.json`。
 
 ### 7.4 日志口绑定
 
-在没有明确绑定日志口时，控制口之外的 Test Box 串口会标记为 `log-candidate` 并监听。确认实际日志口后，可以使用稳定 by-id 名称显式绑定：
+在没有明确绑定日志口时，控制口之外的 Test Box 串口会标记为 `log-candidate` 并监听。确认实际日志口后，可以在 `client.json` 中用稳定 by-id 名称显式绑定：
 
-```bash
-TTLAB_TVBOX_LOG_PORT='serial:usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_01F02F60-if01-port0' \
-./scripts/start-client.sh
+```json
+{
+  "logSelector": "serial:usb-Silicon_Labs_CP2105_Dual_USB_to_UART_Bridge_Controller_01F02F60-if01-port0"
+}
 ```
 
 绑定后：
@@ -650,10 +655,12 @@ usbipd list
 
 ### 显示 `ambiguous`
 
-说明硬件特征匹配成功，但尚未确认控制口。先检查 Client 日志中的探测结果，或显式设置：
+说明硬件特征匹配成功，但尚未确认控制口。先检查 Client 日志中的探测结果，或在 `client.json` 中显式设置 `controlSelector`：
 
-```bash
-TTLAB_TVBOX_CONTROL_PORT='serial:usb-...GD32...if00' ./scripts/start-client.sh
+```json
+{
+  "controlSelector": "serial:usb-...GD32...if00"
+}
 ```
 
 ### 没有实时日志

@@ -11,7 +11,7 @@ const { privateKey, publicKey } = generateKeyPairSync('ed25519');
 const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 
 function config(root: string, overrides: Partial<UpdaterConfig> = {}): UpdaterConfig {
-  return { stateDirectory: join(root, 'state'), installRoot: join(root, 'install'), publicKeyPem, skipRestart: true, runtimePlatform: process.platform, runtimeArchitecture: process.arch, runtimeProtocolVersion: '1.0', allowInsecureDownloadUrl: false, fetchImpl: fetch, sleep: async () => undefined, ...overrides };
+  return { stateDirectory: join(root, 'state'), installRoot: join(root, 'install'), publicKeyPem, skipRestart: true, runtimePlatform: process.platform, runtimeArchitecture: process.arch, runtimeProtocolVersion: '1.0', allowInsecureDownloadUrl: false, socketPath: join(root, 'updater.sock'), fetchImpl: fetch, sleep: async () => undefined, ...overrides };
 }
 
 function request(version: string, bytes: Buffer, overrides: Partial<LocalUpdateRequest> = {}): LocalUpdateRequest {

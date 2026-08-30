@@ -86,13 +86,13 @@ test('validateCommandParameters passes operations without parameters', () => {
 
 test('executes an adapter operation through a fake serial session', async () => {
   const calls: string[] = [];
-  const adapter = new TvStickTestBoxAdapter(100, async () => ({
+  const adapter = new TvStickTestBoxAdapter({ timeoutMs: 100, sessionFactory: async () => ({
     execute: async (command: string) => {
       calls.push(command);
       return 'HDMI1:ON,TVB';
     },
     close: async () => undefined,
-  }));
+  })});
   const result = await adapter.execute({
     commandId: 'cmd-test',
     deviceId: 'serial:test',

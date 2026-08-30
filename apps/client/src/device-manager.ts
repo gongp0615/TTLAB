@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { DeviceLogChunk, ManagedDevice, SerialDevice } from '../../../packages/protocol/src/index.js';
-import { discoverSerialPorts, buildManagedDevices, isTvStickTestBoxPort, isTvStickTestBoxProbePort, tvBoxProfile, type SerialPortInfo } from './discovery.js';
+import { discoverSerialPorts, buildManagedDevices, isTvStickTestBoxPort, isTvStickTestBoxProbePort, tvBoxProfile, type DeviceTypeProfile, type SerialPortInfo } from './discovery.js';
 import { probeTvStickPort, SerialLogCollector } from './serial.js';
 
 interface DeviceBinding {
@@ -17,6 +17,8 @@ export interface DeviceManagerOptions {
   discoverPorts?: (() => SerialPortInfo[]) | undefined;
   onLog?: ((chunk: DeviceLogChunk) => void) | undefined;
   onLogError?: ((port: SerialDevice, error: Error) => void) | undefined;
+  debugDevices?: boolean | undefined;
+  tvBoxProfile?: DeviceTypeProfile | undefined;
 }
 
 export interface CommandTarget {
@@ -54,11 +56,12 @@ export class DeviceManager {
     let controlSelector = this.options.controlSelector ?? binding.controlSelector;
     let logSelector = this.options.logSelector ?? binding.logSelector;
     const tvPorts = ports.filter(isTvStickTestBoxPort);
+    const profile = this.options.tvBoxProfile ?? tvBoxProfile;
     if (tvPorts.length > 0 && !controlSelector && this.options.probeEnabled !== false) {
       for (const port of tvPorts.filter(isTvStickTestBoxProbePort)) {
         try {
-          const probe = this.options.probePort ?? ((path: string, timeoutMs: number) => probeTvStickPort(path, timeoutMs, undefined, tvBoxProfile?.probe.command, tvBoxProfile?.probe.responsePrefix));
-          if (await probe(port.path, tvBoxProfile?.probe.timeoutMs ?? 3000)) {
+          const probe = this.options.probePort ?? ((path: string, timeoutMs: number) => probeTvStickPort(path, timeoutMs, undefined, profile?.probe.command, profile?.probe.responsePrefix));
+          if (await probe(port.path, profile?.probe.timeoutMs ?? 3000)) {
             controlSelector = port.deviceId;
             break;
           }
@@ -73,7 +76,7 @@ export class DeviceManager {
     this.signature = hardwareSignature;
     if (controlSelector || logSelector) this.writeBinding({ controlSelector, logSelector });
     await this.reconcileLogCollectors();
-    if (process.env.TTLAB_DEBUG_DEVICE === '1') {
+    if (this.options.debugDevices === true) {
       const statusOf = (devices: ManagedDevice[]) => devices.map((device) => `${device.deviceId}:${device.status}:${device.ports.map((port) => port.portRole ?? '?').join('/')}`).join('; ') || '(none)';
       console.log(JSON.stringify({ event: 'device_manager_refresh', signatureChanged: true, ports: ports.length, tvPorts: tvPorts.length, before: statusOf(previousDevices), after: statusOf(this.devices), controlSelector, logSelector, at: new Date().toISOString() }));
     }
@@ -113,7 +116,7 @@ export class DeviceManager {
     for (const { device, port } of logPorts) {
       if (this.collectors.has(port.deviceId)) continue;
       try {
-        const collector = await SerialLogCollector.open(port.path, (data) => this.emitLog(device, port, data), (error) => this.options.onLogError?.(port, error), tvBoxProfile?.baudRate);
+        const collector = await SerialLogCollector.open(port.path, (data) => this.emitLog(device, port, data), (error) => this.options.onLogError?.(port, error), (this.options.tvBoxProfile ?? tvBoxProfile)?.baudRate);
         this.collectors.set(port.deviceId, collector);
       } catch (error) {
         this.options.onLogError?.(port, error instanceof Error ? error : new Error('unable to open serial log port'));

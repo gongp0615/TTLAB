@@ -18,11 +18,13 @@ ttlab-updater.service
 /opt/ttlab/client/releases/<version>/
 /opt/ttlab/client/current -> /opt/ttlab/client/releases/<version>/
 /var/lib/ttlab-client/client-id
+/var/lib/ttlab-client/client.json
+/var/lib/ttlab-client/updater.json
 /var/lib/ttlab-client/credentials/
 /var/lib/ttlab-client/update-status.json
 ```
 
-`client-id`、认证凭据和更新状态是 Client 的必要本地状态，不属于 Server 业务数据库。
+`client-id`、认证凭据和更新状态是 Client 的必要本地状态，不属于 Server 业务数据库。`client.json`/`updater.json` 是 Client 与 Updater 的配置文件（不使用环境变量），由 `deploy-client.sh` 生成，`ttlab` 用户可读写。
 
 ## 3. 更新流程
 
@@ -50,7 +52,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/opt/ttlab/client/current/bin/ttlab-client
+ExecStart=/opt/ttlab/client/current/bin/ttlab-client --config /var/lib/ttlab-client/client.json
 Restart=always
 RestartSec=5
 User=ttlab

@@ -2,7 +2,7 @@ import { createReadStream, constants as fsConstants, type ReadStream } from 'nod
 import { open, type FileHandle } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { validateCommandParameters, type CommandRequest, type CommandResult, type SerialDevice } from '../../../packages/protocol/src/index.js';
-import { tvBoxProfile } from './discovery.js';
+import { tvBoxProfile, type DeviceTypeProfile } from './discovery.js';
 
 const maxOutputLength = 16 * 1024;
 const serialPollIntervalMs = 20;
@@ -22,10 +22,10 @@ export interface AtSession {
   close(): Promise<void>;
 }
 
-export type AtSessionFactory = (path: string, timeoutMs: number) => Promise<AtSession>;
+export type AtSessionFactory = (path: string, timeoutMs: number, baudRate?: string) => Promise<AtSession>;
 
-export async function probeTvStickPort(path: string, timeoutMs = 3000, sessionFactory: AtSessionFactory | undefined = undefined, command = 'AT+PING?', responsePrefix = 'PING:'): Promise<boolean> {
-  const session = await (sessionFactory ?? ((serialPath, timeout) => SerialSession.open(serialPath, timeout)))(path, timeoutMs);
+export async function probeTvStickPort(path: string, timeoutMs = 3000, sessionFactory: AtSessionFactory | undefined = undefined, command = 'AT+PING?', responsePrefix = 'PING:', baudRate?: string): Promise<boolean> {
+  const session = await (sessionFactory ?? ((serialPath, timeout, baud) => SerialSession.open(serialPath, timeout, baud)))(path, timeoutMs, baudRate);
   try {
     await session.execute(command, responsePrefix);
     return true;
@@ -58,8 +58,8 @@ export class SerialLogCollector {
   }
 }
 
-export function buildTvStickCommand(operation: string, parameters: Record<string, string>): { command: string; responsePrefix?: string } {
-  const entry = tvBoxProfile?.operations?.find((item) => item.operation === operation);
+export function buildTvStickCommand(operation: string, parameters: Record<string, string>, profile: DeviceTypeProfile | undefined = tvBoxProfile): { command: string; responsePrefix?: string } {
+  const entry = profile?.operations?.find((item) => item.operation === operation);
   if (!entry) throw new SerialOperationError('UNSUPPORTED_OPERATION', `unsupported TV Stick operation: ${operation}`, false);
   const validationError = validateCommandParameters(entry, parameters);
   if (validationError) throw new SerialOperationError('INVALID_ARGUMENT', validationError, false);
@@ -67,12 +67,29 @@ export function buildTvStickCommand(operation: string, parameters: Record<string
   return entry.responsePrefix ? { command, responsePrefix: entry.responsePrefix } : { command };
 }
 
+export interface TvStickTestBoxAdapterOptions {
+  timeoutMs?: number | undefined;
+  baudRate?: string | undefined;
+  profile?: DeviceTypeProfile | undefined;
+  sessionFactory?: AtSessionFactory | undefined;
+}
+
 export class TvStickTestBoxAdapter implements SerialAdapter {
-  constructor(private readonly timeoutMs = 3000, private readonly sessionFactory: AtSessionFactory = (path, timeout) => SerialSession.open(path, timeout)) {}
+  private readonly timeoutMs: number;
+  private readonly baudRate: string | undefined;
+  private readonly profile: DeviceTypeProfile | undefined;
+  private readonly sessionFactory: AtSessionFactory;
+
+  constructor(options: TvStickTestBoxAdapterOptions = {}) {
+    this.timeoutMs = options.timeoutMs ?? 3000;
+    this.baudRate = options.baudRate;
+    this.profile = options.profile;
+    this.sessionFactory = options.sessionFactory ?? ((path, timeout, baud) => SerialSession.open(path, timeout, baud));
+  }
 
   async execute(request: CommandRequest, device: SerialDevice): Promise<CommandResult> {
-    const mapped = buildTvStickCommand(request.operation, request.parameters);
-    const session = await this.sessionFactory(device.path, this.timeoutMs);
+    const mapped = buildTvStickCommand(request.operation, request.parameters, this.profile);
+    const session = await this.sessionFactory(device.path, this.timeoutMs, this.baudRate);
     try {
       const output = await session.execute(mapped.command, mapped.responsePrefix);
       return { commandId: request.commandId, deviceId: request.deviceId, success: true, output: output.slice(-maxOutputLength) };
@@ -88,8 +105,8 @@ export class TvStickTestBoxAdapter implements SerialAdapter {
 class SerialSession implements AtSession {
   private constructor(private readonly handle: FileHandle, private readonly timeoutMs: number) {}
 
-  static async open(path: string, timeoutMs: number): Promise<SerialSession> {
-    await configureSerialPort(path);
+  static async open(path: string, timeoutMs: number, baudRate?: string): Promise<SerialSession> {
+    await configureSerialPort(path, baudRate);
     // The port must be opened non-blocking: a blocking read would make close()
     // hang forever because a pending read on a character device cannot be
     // interrupted, which left commands stuck in the "accepted" state.
@@ -158,7 +175,7 @@ class SerialSession implements AtSession {
   }
 }
 
-export async function configureSerialPort(path: string, baudRate = process.env.TTLAB_SERIAL_BAUD ?? '115200'): Promise<void> {
+export async function configureSerialPort(path: string, baudRate = '115200'): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn('stty', ['-F', path, baudRate, 'cs8', '-cstopb', '-parenb', '-ixon', '-ixoff', 'raw', '-echo']);
     let error = '';

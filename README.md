@@ -72,7 +72,7 @@ Client 运行在目标 Linux 设备上，是 Server 与实际串口硬件之间�
 
 1. Linux 设备启动 Client。
 2. Client 初始化本机串口访问能力。
-3. Client 连接 Server，并完成注册；Client 认证由 `TTLAB_CLIENT_AUTH_ENABLED` 开关控制。
+3. Client 连接 Server，并完成注册；Client 认证开关在配置文件（`client.json`）的 `authEnabled` 字段配置。
 4. Client 扫描本机串口设备并上报设备信息。
 5. Server 保存设备状态，并在 Web 控制台展示。
 6. 用户通过 Web 控制台选择设备并发起操作。
@@ -203,6 +203,8 @@ git update-index --skip-worktree server.env
 ./scripts/start-client.sh
 ```
 
+Client 配置全部使用文件，不使用环境变量。首次运行会在 `$HOME/.local/state/ttlab-client/client.json` 生成默认配置；修改其中的 `serverUrl`（连接 Server 地址）、`token`、`stateDirectory` 等字段后重启 Client 即生效。生产部署时配置写入 `/var/lib/ttlab-client/client.json`。
+
 启动 dsh（DeepSeek Harness，当 `TTLAB_AGENT_ENGINE=dsh` 时需要；脚本从 `server.env` 读取 `TTLAB_DEEPSEEK_API_KEY` 并注入 dsh 的 `DEEPSEEK_API_KEY`）：
 
 ```bash
@@ -215,7 +217,7 @@ git update-index --skip-worktree server.env
 ./scripts/restart-client.sh
 ```
 
-Server 默认使用 HTTP/WS 并监听 `9000`（非特权端口，直接以当前用户运行，无需 root；仅配置 <1024 端口时需 sudo），不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。生产部署的 Server systemd 服务以低权用户 `ttlab-server` 运行。
+Server 默认使用 HTTP/WS 并监听 `9000`（非特权端口，直接以当前用户运行，无需 root；仅配置 <1024 端口时需 sudo），不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，Client 在配置文件（`client.json`）中启用 `authEnabled` 并配置匹配的独立凭据。生产部署的 Server systemd 服务以低权用户 `ttlab-server` 运行。
 
 ### 一键部署
 

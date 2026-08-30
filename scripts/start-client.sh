@@ -44,10 +44,19 @@ log 'installing Linux dependencies from package-lock.json'
 log 'building current Client source'
 "$NPM_BIN" run build
 
-export TTLAB_SERVER_URL="${TTLAB_SERVER_URL:-ws://127.0.0.1:9000/agent/v1/session}"
-export TTLAB_STATE_DIR="${TTLAB_STATE_DIR:-$HOME/.local/state/ttlab-client}"
-export TTLAB_CLIENT_AUTH_ENABLED="${TTLAB_CLIENT_AUTH_ENABLED:-0}"
-export TTLAB_SERIAL_DEVICE_TYPE="${TTLAB_SERIAL_DEVICE_TYPE:-generic-serial}"
+STATE_DIR="$HOME/.local/state/ttlab-client"
+CONFIG_PATH="$STATE_DIR/client.json"
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  install -d -m 0750 "$STATE_DIR"
+  umask 077
+  printf '%s\n' \
+    '{' \
+    '  "serverUrl": "ws://127.0.0.1:9000/agent/v1/session",' \
+    "  \"stateDirectory\": \"$STATE_DIR\"" \
+    '}' > "$CONFIG_PATH"
+  chmod 0600 "$CONFIG_PATH"
+  log "created default config at $CONFIG_PATH; edit it to set the server URL and credentials"
+fi
 
 if [[ -f /proc/version ]] && grep -qi microsoft /proc/version; then
   log 'WSL detected; checking USB serial devices for this environment'
@@ -63,6 +72,5 @@ if [[ -f /proc/version ]] && grep -qi microsoft /proc/version; then
   fi
 fi
 
-log "connecting to $TTLAB_SERVER_URL"
-log "state directory: $TTLAB_STATE_DIR"
-exec "$NODE_BIN" "$PROJECT_ROOT/dist/apps/client/src/index.js"
+log "config file: $CONFIG_PATH"
+exec "$NODE_BIN" "$PROJECT_ROOT/dist/apps/client/src/index.js" --config "$CONFIG_PATH"

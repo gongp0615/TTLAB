@@ -49,7 +49,7 @@ sudo -E ./scripts/install-udev-rules.sh remove    # 卸载，恢复 dialout 组�
 ./scripts/start-client.sh
 ```
 
-该脚本运行仓库当前构建结果，不安装 systemd 服务、不复制到 `/opt`，日志直接输出到当前终端。默认连接 `ws://127.0.0.1:9000/agent/v1/session`，状态保存到用户目录；可通过 `TTLAB_SERVER_URL`、`TTLAB_SERIAL_DEVICE_TYPE` 和 `TTLAB_STATE_DIR` 覆盖配置。
+该脚本运行仓库当前构建结果，不安装 systemd 服务、不复制到 `/opt`，日志直接输出到当前终端。默认连接 `ws://127.0.0.1:9000/agent/v1/session`，状态保存到用户目录。首次运行会生成默认配置文件 `$HOME/.local/state/ttlab-client/client.json`，修改其中的 `serverUrl`、`stateDirectory` 等字段即可，不使用环境变量。
 
 #### WSL 下 USB 串口自动挂载
 
@@ -122,7 +122,7 @@ curl http://127.0.0.1:9000/healthz
 journalctl -u ttlab-server -f
 ```
 
-Server 默认以低权用户 `ttlab-server` 运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/etc/ttlab/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用；启用后需确保 `ttlab-server` 用户能读取证书文件。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
+Server 默认以低权用户 `ttlab-server` 运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/etc/ttlab/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用；启用后需确保 `ttlab-server` 用户能读取证书文件。Client 的 `serverUrl`（`client.json`）默认使用 `ws://`；启用 TLS 后改为 `wss://`。
 
 Server 额外配置项：
 
@@ -179,23 +179,21 @@ sudo install -o root -g root -m 0644 update-public.pem /etc/ttlab/update-public.
 sudo -E env \
   TTLAB_VERSION=0.1.0 \
   TTLAB_SERVER_URL='ws://ttlab.example.com/agent/v1/session' \
-  TTLAB_SERIAL_DEVICE_TYPE='tv-stick-test-box' \
   TTLAB_UPDATE_PUBLIC_KEY_FILE='/etc/ttlab/update-public.pem' \
   ./scripts/deploy-client.sh
 ```
 
-Client 的 `deploy-client.sh` 会自动安装 `dfu-util`（固件刷写依赖），并将 DFU 设备 VID/PID 写入 `/etc/ttlab/client.env`：
+Client 的 `deploy-client.sh` 会自动安装 `dfu-util`（固件刷写依赖）。DFU 设备的 VID/PID 与 `dfu-util` 路径在 `client.json` 的 `dfu` 字段配置（默认 `dfu-util`、`28e9:018a`），未配置时使用默认值：
 
-| 变量 | 默认 | 说明 |
-|---|---|---|
-| `TTLAB_DFU_VID` | `28e9` | 设备进入 DFU 模式后的 USB vendor id |
-| `TTLAB_DFU_PID` | `018a` | 设备进入 DFU 模式后的 USB product id（实测后可能需调整） |
+```json
+{ "dfu": { "utilPath": "dfu-util", "vid": "28e9", "pid": "018a" } }
+```
 
 脚本会：
 
 - 创建 `ttlab` 系统用户并加入 `dialout`。
 - 安装 Client 和 Updater 版本目录及启动入口。
-- 生成 `/etc/ttlab/client.env` 和 `/etc/ttlab/updater.env`。
+- 生成 `/var/lib/ttlab-client/client.json` 和 `/var/lib/ttlab-client/updater.json`（升级时自动备份旧配置，启动失败时回滚）。
 - 启用 `ttlab-updater.service` 和 `ttlab-client.service`。
 - 配置 Client 开机启动、异常自动拉起和更新后自动重启。
 
@@ -207,7 +205,7 @@ journalctl -u ttlab-client -f
 journalctl -u ttlab-updater -f
 ```
 
-当前部署默认关闭 Client Token 认证。Client 未配置 `TTLAB_CLIENT_ID` 时会自动生成并保存身份；如需启用认证，在 Server 和 Client 部署命令中同时加入 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的 `clientId=token`。首版本无数据库，Server 重启后 Client 会自动重连并重新上报快照。Server 服务以低权用户 `ttlab-server` 运行，但仍只建议用于受控网络。
+当前部署默认关闭 Client Token 认证。Client 未配置 `clientId` 时会自动生成并保存身份；如需启用认证，Server 部署命令加入 `TTLAB_CLIENT_AUTH_ENABLED=1`，Client 在 `client.json` 中启用 `authEnabled` 并配置匹配的 `clientId` 与 `token`。首版本无数据库，Server 重启后 Client 会自动重连并重新上报快照。Server 服务以低权用户 `ttlab-server` 运行，但仍只建议用于受控网络。
 
 ## 4. 重新部署和回滚
 

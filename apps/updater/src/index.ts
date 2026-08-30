@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { UpdateRequest } from '../../../packages/protocol/src/index.js';
+import { DEFAULT_UPDATER_CONFIG, loadJsonConfig, validateUpdaterConfig, type UpdaterConfig as UpdaterFileConfig } from '../../../packages/config/src/index.js';
 
 export interface LocalUpdateRequest extends UpdateRequest {
   downloadToken?: string;
@@ -20,25 +21,34 @@ export interface UpdaterConfig {
   runtimeArchitecture: string;
   runtimeProtocolVersion: string;
   allowInsecureDownloadUrl: boolean;
+  socketPath: string;
   fetchImpl: typeof fetch;
   sleep: (milliseconds: number) => Promise<void>;
 }
 
-const defaultPublicKeyFile = process.env.TTLAB_UPDATE_PUBLIC_KEY_FILE;
-const defaultPublicKey = process.env.TTLAB_UPDATE_PUBLIC_KEY ?? (defaultPublicKeyFile && existsSync(defaultPublicKeyFile) ? readFileSync(defaultPublicKeyFile, 'utf8') : undefined);
+const DEFAULT_UPDATER_CONFIG_PATH = '/var/lib/ttlab-client/updater.json';
 
-export const defaultConfig: UpdaterConfig = {
-  stateDirectory: process.env.TTLAB_STATE_DIR ?? '/var/lib/ttlab-client',
-  installRoot: process.env.TTLAB_INSTALL_ROOT ?? '/opt/ttlab/client',
-  publicKeyPem: defaultPublicKey,
-  skipRestart: process.env.TTLAB_SKIP_RESTART === '1',
-  runtimePlatform: process.env.TTLAB_RUNTIME_PLATFORM ?? platform(),
-  runtimeArchitecture: process.env.TTLAB_RUNTIME_ARCHITECTURE ?? arch(),
-  runtimeProtocolVersion: process.env.TTLAB_RUNTIME_PROTOCOL_VERSION ?? '1.0',
-  allowInsecureDownloadUrl: process.env.TTLAB_ALLOW_INSECURE_UPDATE_URL === '1',
-  fetchImpl: fetch,
-  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-};
+function resolvePublicKeyPem(publicKeyFile: string): string | undefined {
+  return publicKeyFile && existsSync(publicKeyFile) ? readFileSync(publicKeyFile, 'utf8') : undefined;
+}
+
+function buildUpdaterConfig(fileConfig: UpdaterFileConfig): UpdaterConfig {
+  return {
+    stateDirectory: fileConfig.stateDirectory,
+    installRoot: fileConfig.installRoot,
+    publicKeyPem: resolvePublicKeyPem(fileConfig.publicKeyFile),
+    skipRestart: fileConfig.skipRestart,
+    runtimePlatform: fileConfig.runtimePlatform || platform(),
+    runtimeArchitecture: fileConfig.runtimeArchitecture || arch(),
+    runtimeProtocolVersion: fileConfig.runtimeProtocolVersion,
+    allowInsecureDownloadUrl: fileConfig.allowInsecureDownloadUrl,
+    socketPath: fileConfig.socketPath,
+    fetchImpl: fetch,
+    sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  };
+}
+
+export const defaultConfig: UpdaterConfig = buildUpdaterConfig(DEFAULT_UPDATER_CONFIG);
 
 function isSafeSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(value) && value !== '.' && value !== '..';
@@ -68,7 +78,7 @@ export function validateUpdateRequest(request: LocalUpdateRequest, config: Updat
   if (!isSafeSegment(request.updateId) || !isSafeSegment(request.version) || !isSafeSegment(request.artifact)) throw new Error('invalid update path segment');
   if (!/^[a-f0-9]{64}$/i.test(request.sha256)) throw new Error('invalid artifact hash');
   if (!Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('update request expired');
-  if (!config.publicKeyPem) throw new Error('TTLAB_UPDATE_PUBLIC_KEY is required');
+  if (!config.publicKeyPem) throw new Error('public key is required; set publicKeyFile in the updater config');
   if (request.platform !== config.runtimePlatform) throw new Error(`update platform ${request.platform} does not match ${config.runtimePlatform}`);
   if (normalizeArchitecture(request.architecture) !== normalizeArchitecture(config.runtimeArchitecture)) throw new Error(`update architecture ${request.architecture} does not match ${config.runtimeArchitecture}`);
   if (!versionAtLeast(config.runtimeProtocolVersion, request.minProtocolVersion)) throw new Error(`protocol ${config.runtimeProtocolVersion} is below required ${request.minProtocolVersion}`);
@@ -190,12 +200,49 @@ export function startUpdaterServer(socketPath: string, config: UpdaterConfig = d
   });
 }
 
+interface UpdaterArgs {
+  configPath: string;
+  configExplicit: boolean;
+  serve: boolean;
+  positional: string[];
+}
+
+function parseArgs(argv: string[]): UpdaterArgs {
+  const parsed: UpdaterArgs = { configPath: DEFAULT_UPDATER_CONFIG_PATH, configExplicit: false, serve: false, positional: [] };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg) continue;
+    if (arg === '--serve') {
+      parsed.serve = true;
+    } else if (arg === '--config') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('-')) throw new Error('--config requires a file path argument');
+      parsed.configPath = value;
+      parsed.configExplicit = true;
+      i += 1;
+    } else if (arg.startsWith('--config=')) {
+      parsed.configPath = arg.slice('--config='.length);
+      parsed.configExplicit = true;
+    } else {
+      parsed.positional.push(arg);
+    }
+  }
+  return parsed;
+}
+
+function loadConfig(configPath: string, explicit: boolean): UpdaterConfig {
+  const { config } = loadJsonConfig<UpdaterFileConfig>(configPath, DEFAULT_UPDATER_CONFIG, { requireFile: explicit, validate: validateUpdaterConfig });
+  return buildUpdaterConfig(config);
+}
+
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 if (isMain) {
-  if (process.argv.includes('--serve')) {
-    startUpdaterServer(process.env.TTLAB_UPDATER_SOCKET ?? '/run/ttlab-updater/update.sock');
+  const parsed = parseArgs(process.argv.slice(2));
+  const config = loadConfig(parsed.configPath, parsed.configExplicit);
+  if (parsed.serve) {
+    startUpdaterServer(config.socketPath, config);
   } else {
-    const request = JSON.parse(process.argv[2] ?? '{}') as LocalUpdateRequest;
-    runSingle(request, defaultConfig).catch(() => { process.exitCode = 1; });
+    const request = JSON.parse(parsed.positional[0] ?? '{}') as LocalUpdateRequest;
+    runSingle(request, config).catch(() => { process.exitCode = 1; });
   }
 }

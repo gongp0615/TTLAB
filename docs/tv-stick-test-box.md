@@ -22,12 +22,13 @@ CP2105 的 `if00` 和 `if01` 是两个 UART 通道。设备识别优先使用 ud
 
 启动时 Client 只会对设备类型配置中明确标记为控制口候选的串口发送只读 `AT+PING?`。当前配置只探测 GD32 CDC ACM；CP2105 通道不会发送控制命令，只作为日志候选。
 
-控制口和日志口可以通过稳定设备名明确绑定：
+控制口和日志口可以通过稳定设备名明确绑定，在 `client.json` 中配置 `controlSelector` 和 `logSelector`：
 
-```bash
-TTLAB_TVBOX_CONTROL_PORT='serial:usb-...if00...' \
-TTLAB_TVBOX_LOG_PORT='serial:usb-...if01-port0' \
-./scripts/start-client.sh
+```json
+{
+  "controlSelector": "serial:usb-...if00...",
+  "logSelector": "serial:usb-...if01-port0"
+}
 ```
 
 绑定结果保存在 Client 状态目录的 `device-bindings.json`，不会保存动态 `/dev/ttyUSB0` 路径。
@@ -79,7 +80,7 @@ Web/Agent 发起 firmware.flash(version, artifact)
 
 刷机全程通过 `command.progress` 上报阶段与百分比。设备卡在 DFU 模式时返回 `FLASH_FAILED_DEVICE_IN_DFU`，可拔插 USB 或手动 `dfu-util -D` 恢复。
 
-DFU 模式的 VID:PID 当前配置为 `28e9:018a`（`TTLAB_DFU_VID`/`TTLAB_DFU_PID` 可配）。设备进入 DFU 后是否重新枚举为其他 VID:PID、以及 `dfu-util` 的 `-a` 参数组合，需在真实硬件上实测后回填。
+DFU 模式的 VID:PID 当前默认 `28e9:018a`，可在 `client.json` 的 `dfu` 字段配置（`utilPath`/`vid`/`pid`）。设备进入 DFU 后是否重新枚举为其他 VID:PID、以及 `dfu-util` 的 `-a` 参数组合，需在真实硬件上实测后回填。
 
 ## 5. WSL 说明
 
@@ -99,4 +100,4 @@ Windows 连接的 USB 设备必须先通过 `usbipd-win` 附加到 WSL，附加�
 TTLAB_WSL_SERIAL_BUSIDS='2-5 2-6' ./scripts/serial-attach.sh attach
 ```
 
-如果设备只显示为 `ambiguous`，先查看 Client 上报的稳定端口名称，再用 `TTLAB_TVBOX_CONTROL_PORT` 和 `TTLAB_TVBOX_LOG_PORT` 做一次绑定。
+如果设备只显示为 `ambiguous`，先查看 Client 上报的稳定端口名称，再在 `client.json` 中用 `controlSelector` 和 `logSelector` 做一次绑定。

@@ -13,7 +13,7 @@ interface DeviceTypeMatch {
   namePattern?: string;
 }
 
-interface DeviceTypeProfile {
+export interface DeviceTypeProfile {
   type: string;
   displayName: string;
   match: DeviceTypeMatch[];
@@ -24,17 +24,18 @@ interface DeviceTypeProfile {
   operations?: DeviceOperation[];
 }
 
-function readTvBoxProfile(): DeviceTypeProfile | undefined {
-  const file = process.env.TTLAB_TVBOX_PROFILE ?? './device-types/tv-stick-test-box/device.json';
-  if (!existsSync(file)) return undefined;
+export const DEFAULT_TVBOX_PROFILE_PATH = './device-types/tv-stick-test-box/device.json';
+
+export function readTvBoxProfile(filePath: string): DeviceTypeProfile | undefined {
+  if (!existsSync(filePath)) return undefined;
   try {
-    return JSON.parse(readFileSync(file, 'utf8')) as DeviceTypeProfile;
+    return JSON.parse(readFileSync(filePath, 'utf8')) as DeviceTypeProfile;
   } catch {
     return undefined;
   }
 }
 
-export const tvBoxProfile = readTvBoxProfile();
+export const tvBoxProfile = readTvBoxProfile(DEFAULT_TVBOX_PROFILE_PATH);
 
 function udevProperties(path: string): Record<string, string> {
   try {

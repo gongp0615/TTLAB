@@ -19,7 +19,7 @@ import { TvStickTestBoxAdapter, type SerialAdapter } from './serial.js';
 import { UsbDfuFlasher, type FirmwareFlasher } from './firmware-flasher.js';
 import { DeviceCommandExecutor } from './executor.js';
 import { DeviceManager } from './device-manager.js';
-import type { SerialPortInfo } from './discovery.js';
+import { DEFAULT_TVBOX_PROFILE_PATH, readTvBoxProfile, type SerialPortInfo } from './discovery.js';
 
 function collectAddresses(): string[] {
   const entries = Object.values(networkInterfaces()).flatMap((list) => list ?? []);
@@ -43,6 +43,10 @@ export interface ClientAgentOptions {
   controlSelector?: string | undefined;
   logSelector?: string | undefined;
   probeEnabled?: boolean | undefined;
+  serialBaudRate?: string | undefined;
+  tvBoxProfilePath?: string | undefined;
+  debugDevices?: boolean | undefined;
+  dfu?: { utilPath?: string | undefined; vid?: string | undefined; pid?: string | undefined } | undefined;
   adapter?: SerialAdapter | undefined;
   flasher?: FirmwareFlasher | undefined;
   discoverPorts?: (() => SerialPortInfo[]) | undefined;
@@ -78,14 +82,23 @@ export class ClientAgent {
     this.heartbeatIntervalMs = options.heartbeatMs ?? 10_000;
     this.refreshIntervalMs = options.refreshIntervalMs ?? 5_000;
     this.supersededDelay = options.supersededDelayMs ?? 5_000;
-    this.adapter = options.adapter ?? new TvStickTestBoxAdapter(options.serialTimeoutMs ?? 3000);
-    this.flasher = options.flasher ?? new UsbDfuFlasher({ stateDirectory: options.stateDirectory, ...(options.token ? { token: options.token } : {}) });
+    const tvBoxProfile = readTvBoxProfile(options.tvBoxProfilePath ?? DEFAULT_TVBOX_PROFILE_PATH);
+    this.adapter = options.adapter ?? new TvStickTestBoxAdapter({ timeoutMs: options.serialTimeoutMs ?? 3000, baudRate: options.serialBaudRate, profile: tvBoxProfile });
+    this.flasher = options.flasher ?? new UsbDfuFlasher({
+      stateDirectory: options.stateDirectory,
+      ...(options.token ? { token: options.token } : {}),
+      ...(options.dfu?.utilPath ? { dfuUtilPath: options.dfu.utilPath } : {}),
+      ...(options.dfu?.vid ? { dfuVid: options.dfu.vid } : {}),
+      ...(options.dfu?.pid ? { dfuPid: options.dfu.pid } : {}),
+    });
     this.deviceManager = new DeviceManager({
       stateDirectory: options.stateDirectory,
       controlSelector: options.controlSelector,
       logSelector: options.logSelector,
       probeEnabled: options.probeEnabled,
       discoverPorts: options.discoverPorts,
+      debugDevices: options.debugDevices,
+      tvBoxProfile,
       onLog: (chunk) => this.send('device.log.chunk', chunk),
       onLogError: (port, error) => {
         if (options.onLogError) options.onLogError(port, error);

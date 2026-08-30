@@ -50,9 +50,9 @@ export class UsbDfuFlasher implements FirmwareFlasher {
   private readonly sleepImpl: (ms: number) => Promise<void>;
 
   constructor(private readonly options: { stateDirectory: string; token?: string } & DfuUtilOptions) {
-    this.dfuUtilPath = options.dfuUtilPath ?? process.env.TTLAB_DFU_UTIL ?? 'dfu-util';
-    this.dfuVid = options.dfuVid ?? process.env.TTLAB_DFU_VID ?? '28e9';
-    this.dfuPid = options.dfuPid ?? process.env.TTLAB_DFU_PID ?? '018a';
+    this.dfuUtilPath = options.dfuUtilPath ?? 'dfu-util';
+    this.dfuVid = options.dfuVid ?? '28e9';
+    this.dfuPid = options.dfuPid ?? '018a';
     this.downloadTimeoutMs = options.downloadTimeoutMs ?? 120_000;
     this.dfuWaitTimeoutMs = options.dfuWaitTimeoutMs ?? 60_000;
     this.flashTimeoutMs = options.flashTimeoutMs ?? 180_000;

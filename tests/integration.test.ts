@@ -197,15 +197,17 @@ test('the actual Client process registers, persists identity, and reconnects', a
   let client: ChildProcessWithoutNullStreams | undefined;
   try {
     await waitForOutput(server, (line) => line.includes('server_started'));
-    const clientEnv = { ...process.env, TTLAB_SERVER_URL: `ws://127.0.0.1:${port}/agent/v1/session`, TTLAB_STATE_DIR: join(root, 'state'), TTLAB_HEARTBEAT_MS: '100' };
-    client = spawn(process.execPath, ['dist/apps/client/src/index.js'], { cwd: process.cwd(), env: clientEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    const stateDir = join(root, 'state');
+    const configFile = join(root, 'client.json');
+    writeFileSync(configFile, JSON.stringify({ serverUrl: `ws://127.0.0.1:${port}/agent/v1/session`, stateDirectory: stateDir, heartbeatMs: 100 }));
+    client = spawn(process.execPath, ['dist/apps/client/src/index.js', '--config', configFile], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
     const started = waitForOutput(client, (line) => line.includes('client_started'));
     await started;
     await waitUntil(() => isClientOnline(port));
-    assert.equal(existsSync(join(root, 'state', 'client-id')), true);
+    assert.equal(existsSync(join(stateDir, 'client-id')), true);
     client.kill('SIGTERM');
     await once(client, 'exit');
-    client = spawn(process.execPath, ['dist/apps/client/src/index.js'], { cwd: process.cwd(), env: clientEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+    client = spawn(process.execPath, ['dist/apps/client/src/index.js', '--config', configFile], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
     await waitForOutput(client, (line) => line.includes('client_started'));
     await waitUntil(() => isClientOnline(port));
   } finally {
