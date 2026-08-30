@@ -133,46 +133,37 @@ Server 额外配置项：
 
 ### 2.1 部署 dsh 引擎（可选）
 
-当 `TTLAB_AGENT_ENGINE=dsh` 时，需要额外部署 DeepSeek Harness 常驻服务：
+当 `TTLAB_AGENT_ENABLED=1` 且 `TTLAB_AGENT_ENGINE=dsh` 时，需要额外部署 DeepSeek Harness 常驻服务。`scripts/deploy-server.sh` 在检测到该配置后会自动完成全部部署：
+
+1. 写 `/etc/ttlab/dsh.env`（0600，root）：`DEEPSEEK_API_KEY`（取 `TTLAB_DEEPSEEK_API_KEY`）、`DEEPSEEK_BASE_URL`（取 `TTLAB_AGENT_LLM_URL`）。
+2. 向 Server 服务用户安装 dsh web profile（仓库 `deploy/dsh-web-profile/` → `$HOME/.dsh/profiles/web/`）。若设置了 `TTLAB_AGENT_TOKEN`，安装的 `cordis.patch.yml` 会为 TTLAB MCP client 注入 `Authorization: Bearer <token>`。
+3. 生成并启用 `ttlab-agent.service`（真实 `dsh` 二进制路径由部署脚本解析，见参考单元 [systemd/ttlab-agent.service](../systemd/ttlab-agent.service)）。
+
+前提：Server 宿主机已安装 dsh：
 
 ```bash
 # 安装 dsh（在 Server 宿主机，建议使用低权用户运行）
 npm install -g @deepseek-ai/dsh
-
-# 生成 systemd 服务，绑定 localhost，TTLAB Server 通过本地 API 驱动
-# 注意：dsh 配置文件需包含 DeepSeek API Key，并将 TTLAB MCP 加入其 MCP 列表：
-#   url: http://127.0.0.1:9000/mcp/v1
-#   headers: { authorization: "Bearer <TTLAB_AGENT_TOKEN>" }
 ```
 
-`ttlab-agent.service`（示例）：
-
-```ini
-[Unit]
-Description=DeepSeek Harness (dsh) web service for TTLAB
-After=network.target ttlab-server.service
-
-[Service]
-User=ttlab-server
-ExecStart=/usr/bin/dsh web --port 9333
-Restart=on-failure
-RestartSec=3
-```
-
-dsh web profile 配置（`~/.dsh/profiles/web/`）：除官方 web profile 外，还需在 `cordis.patch.yml` 中：
+dsh web profile 配置（仓库 `deploy/dsh-web-profile/`，安装到 `~/.dsh/profiles/web/`）：
 
 - 挂载 TTLAB MCP：`@deepseek-ai/dsh-mcp-client`，`serverName: ttlab`，`url: http://127.0.0.1:9000/mcp/v1`。
 - 挂载 `@deepseek-ai/dsh-tool-ask-user`（可选提问工具，LLM 主动询问操作员时使用）。TTLAB 写操作默认完全授权，无需审批门插件。
+- `ttlab-approval-gate.js`：高风险 TTLAB 工具调用（`system.reset`/`device.reboot`/`firmware.flash` 与升级）经 dsh 审批服务转发到 TTLAB 聊天面板确认。
 
 然后在 `/etc/ttlab/server.env` 设置：
 
 ```ini
+TTLAB_AGENT_ENABLED=1
 TTLAB_AGENT_ENGINE=dsh
+TTLAB_DEEPSEEK_API_KEY=...
+TTLAB_AGENT_TOKEN=...            # 可选，dsh 连 MCP 的凭据
 TTLAB_DSH_BASE_URL=http://127.0.0.1:9333
 TTLAB_DSH_WORKDIR=./data/agent-work
 ```
 
-`TTLAB_DSH_WORKDIR` 目录需确保 `ttlab-server` 用户可写。dsh 接入的完整设计见 [agent-integration.md](agent-integration.md)。
+`TTLAB_DSH_WORKDIR` 目录需确保 `ttlab-server` 用户可写。开发环境手动启动可用 `./scripts/start-dsh.sh`（从 `server.env` 读取密钥并注入 `DEEPSEEK_API_KEY`）。dsh 接入的完整设计见 [agent-integration.md](agent-integration.md)。
 
 ## 3. 部署 Client
 

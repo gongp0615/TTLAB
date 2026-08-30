@@ -203,6 +203,12 @@ git update-index --skip-worktree server.env
 ./scripts/start-client.sh
 ```
 
+启动 dsh（DeepSeek Harness，当 `TTLAB_AGENT_ENGINE=dsh` 时需要；脚本从 `server.env` 读取 `TTLAB_DEEPSEEK_API_KEY` 并注入 dsh 的 `DEEPSEEK_API_KEY`）：
+
+```bash
+./scripts/start-dsh.sh
+```
+
 重启 Client（若已部署为 systemd 服务则通过 `systemctl restart ttlab-client`，否则停止并重启前台调试进程）：
 
 ```bash

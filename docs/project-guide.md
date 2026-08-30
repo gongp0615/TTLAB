@@ -48,7 +48,7 @@ tv-stick-test-box
 - Server 业务状态仍保存在内存中，重启后不会恢复历史数据。
 - Server 默认使用 HTTP/WS，Client 认证默认关闭。
 - Server 目前没有完整的 Web 用户认证和 RBAC。
-- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板已可用；`dsh` 引擎（DshEngine）已实现并配有 mock 联调测试，真实 dsh 环境联调待网络可用，见 [agent-integration.md](agent-integration.md)。
+- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板已可用；`dsh` 引擎（DshEngine）已实现，真实 dsh 环境已完成联调（本地 `dsh web` + TTLAB 聊天面板通信测试通过），见 [agent-integration.md](agent-integration.md)。
 - Test Box 的日志口需要根据真实设备确认，自动识别目前只负责控制口探测。
 - 当前配置默认将一个 Client 上发现的同类 Test Box 端点聚合为一个设备；同一 Client 挂载多台相同 Test Box 时，还需要增加按 USB 拓扑或显式绑定的分组配置。
 
@@ -108,7 +108,7 @@ TTLAB_TLS_CERT_FILE=
 TTLAB_PUBLIC_BASE_URL=http://Server的IP或域名
 ```
 
-启动脚本（`start-server.sh`/`start-client.sh`）在 `server.env` 缺失时自动从 `server.env.example` 复制创建。
+启动脚本（`start-server.sh`/`start-client.sh`/`start-dsh.sh`）在 `server.env` 缺失时自动从 `server.env.example` 复制创建。
 
 `server.env` 只包含本机非敏感默认值；启用认证或保存 Agent 密钥后不要提交该文件。Agent/模型相关键（`TTLAB_AGENT_*`、`TTLAB_DEEPSEEK_API_KEY`）可在 Web 控制台"系统设置 → Agent / 模型设置"页面修改，保存后原地写回 `server.env`；详见 [agent-integration.md](agent-integration.md) 第 8 节。
 
@@ -131,6 +131,14 @@ TTLAB_PUBLIC_BASE_URL=http://Server的IP或域名
 
 Server 前台运行，按 `Ctrl+C` 停止。默认监听 `9000` 端口（非特权端口），直接以当前用户运行，无需 root；仅当 `server.env` 配置了 <1024 的特权端口（如 80）时才通过 `sudo` 提权。
 
+当 `TTLAB_AGENT_ENGINE=dsh` 时，还需单独启动 DeepSeek Harness：
+
+```bash
+./scripts/start-dsh.sh
+```
+
+脚本从 `server.env` 读取 `TTLAB_DEEPSEEK_API_KEY` 并注入 dsh 的 `DEEPSEEK_API_KEY`，以 `--no-open` 前台常驻在 `TTLAB_DSH_BASE_URL`（默认 `http://127.0.0.1:9333`），按 `Ctrl+C` 停止；若 `server.env` 的引擎非 `dsh`，脚本直接退出。生产部署由 `deploy-server.sh` 自动完成（见 4.3）。
+
 ### 4.3 systemd 部署
 
 生产式安装使用：
@@ -146,6 +154,8 @@ sudo ./scripts/deploy-server.sh
 /opt/ttlab/server/current
 /etc/ttlab/server.env
 /var/log/ttlab-server
+/etc/ttlab/dsh.env                       # 仅 TTLAB_AGENT_ENGINE=dsh 时
+/etc/systemd/system/ttlab-agent.service  # 仅 TTLAB_AGENT_ENGINE=dsh 时
 ```
 
 生成的 Server systemd 服务以独立低权用户 `ttlab-server` 运行，并执行：
@@ -154,7 +164,7 @@ sudo ./scripts/deploy-server.sh
 /opt/ttlab/server/current/dist/apps/server/src/index.js
 ```
 
-`ttlab-server` 用户由部署脚本幂等创建，用于运行服务、写固件目录（`TTLAB_RELEASE_DIR`）和回写 `/etc/ttlab/server.env`；部署动作本身（写 `/etc/systemd`、创建用户）仍需 root。
+`ttlab-server` 用户由部署脚本幂等创建，用于运行服务、写固件目录（`TTLAB_RELEASE_DIR`）和回写 `/etc/ttlab/server.env`；部署动作本身（写 `/etc/systemd`、创建用户）仍需 root。当 `TTLAB_AGENT_ENABLED=1` 且 `TTLAB_AGENT_ENGINE=dsh` 时，脚本还会把 dsh web profile（仓库 `deploy/dsh-web-profile/`）安装到该用户的 `~/.dsh/profiles/web/`，生成并启用 `ttlab-agent.service`。
 
 检查：
 

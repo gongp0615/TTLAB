@@ -12,6 +12,92 @@ log() { printf '[ttlab-server] %s\n' "$*"; }
 cleanup() { if [[ -n "${STAGING_DIR:-}" && -d "$STAGING_DIR" ]]; then rm -rf -- "$STAGING_DIR"; fi; }
 trap cleanup EXIT
 
+# Install the dsh (DeepSeek Harness) web service the Agent gateway drives.
+# Runs only when TTLAB_AGENT_ENABLED=1 and TTLAB_AGENT_ENGINE=dsh. Writes the
+# dsh credential file (/etc/ttlab/dsh.env), installs the shipped dsh web
+# profile for the Server service user, and registers ttlab-agent.service.
+deploy_dsh_agent() {
+  local dsh_bin dsh_base_url dsh_port dsh_home dsh_workdir
+  dsh_bin="$(command -v dsh || true)"
+  [[ -n "$dsh_bin" ]] || fail 'dsh is not installed; install it with: npm install -g @deepseek-ai/dsh'
+  [[ -n "${TTLAB_DEEPSEEK_API_KEY:-}" ]] || fail 'TTLAB_DEEPSEEK_API_KEY is required when TTLAB_AGENT_ENGINE=dsh'
+  dsh_base_url="${TTLAB_DSH_BASE_URL:-http://127.0.0.1:9333}"
+  if [[ "$dsh_base_url" =~ :([0-9]+)/?$ ]]; then
+    dsh_port="${BASH_REMATCH[1]}"
+  else
+    dsh_port=9333
+  fi
+  [[ "$dsh_port" =~ ^[0-9]+$ ]] || fail "invalid TTLAB_DSH_BASE_URL: $dsh_base_url"
+
+  log "deploying dsh agent service on $dsh_base_url"
+
+  # The dsh session work directory must exist and be writable by the Server
+  # service user. Defaults to an absolute path under the user's state dir.
+  dsh_workdir="${TTLAB_DSH_WORKDIR:-/var/lib/$SERVER_USER/dsh-work}"
+  install -d -o "$SERVER_USER" -g "$SERVER_USER" -m 0750 "$dsh_workdir"
+
+  DSH_ENV_TMP="$(mktemp /etc/ttlab/dsh.env.XXXXXX)"
+  umask 077
+  printf '%s\n' \
+    "DEEPSEEK_API_KEY=${TTLAB_DEEPSEEK_API_KEY:-}" \
+    "DEEPSEEK_BASE_URL=${TTLAB_AGENT_LLM_URL:-}" > "$DSH_ENV_TMP"
+  install -o root -g root -m 0600 "$DSH_ENV_TMP" /etc/ttlab/dsh.env
+  rm -f -- "$DSH_ENV_TMP"
+
+  dsh_home="$(getent passwd "$SERVER_USER" | cut -d: -f6)/.dsh"
+  install -d -o "$SERVER_USER" -g "$SERVER_USER" -m 0700 "$dsh_home/profiles/web"
+  install -o "$SERVER_USER" -g "$SERVER_USER" -m 0644 \
+    "$SOURCE_ROOT/deploy/dsh-web-profile/package.json" \
+    "$SOURCE_ROOT/deploy/dsh-web-profile/cordis.yml" \
+    "$SOURCE_ROOT/deploy/dsh-web-profile/pnpm-workspace.yaml" \
+    "$SOURCE_ROOT/deploy/dsh-web-profile/ttlab-approval-gate.js" \
+    "$dsh_home/profiles/web/"
+  # Inject the MCP authorization header when TTLAB_AGENT_TOKEN is set; the
+  # shipped profile is the no-auth baseline.
+  PATCH_TMP="$(mktemp "$dsh_home/profiles/web/cordis.patch.yml.XXXXXX")"
+  if [[ -n "${TTLAB_AGENT_TOKEN:-}" ]]; then
+    sed "s|^        headers: {}$|        headers: { authorization: 'Bearer $TTLAB_AGENT_TOKEN' }|" \
+      "$SOURCE_ROOT/deploy/dsh-web-profile/cordis.patch.yml" > "$PATCH_TMP"
+  else
+    cp "$SOURCE_ROOT/deploy/dsh-web-profile/cordis.patch.yml" "$PATCH_TMP"
+  fi
+  install -o "$SERVER_USER" -g "$SERVER_USER" -m 0644 "$PATCH_TMP" "$dsh_home/profiles/web/cordis.patch.yml"
+  rm -f -- "$PATCH_TMP"
+
+  AGENT_SERVICE_TMP="$(mktemp /etc/systemd/system/ttlab-agent.service.XXXXXX)"
+  cat > "$AGENT_SERVICE_TMP" <<EOF
+[Unit]
+Description=TTLAB Agent (DeepSeek Harness dsh web service)
+After=network-online.target $SERVICE_NAME.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/ttlab/dsh.env
+ExecStart=$dsh_bin web --port $dsh_port --no-open
+User=$SERVER_USER
+Group=$SERVER_USER
+StateDirectory=$SERVER_USER
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  install -o root -g root -m 0644 "$AGENT_SERVICE_TMP" /etc/systemd/system/ttlab-agent.service
+  rm -f -- "$AGENT_SERVICE_TMP"
+
+  systemctl daemon-reload
+  if ! systemctl enable --now ttlab-agent.service || ! systemctl is-active --quiet ttlab-agent.service; then
+    log 'dsh agent service failed to start; inspect with: journalctl -u ttlab-agent.service'
+    exit 1
+  fi
+  log "dsh agent service is active on $dsh_base_url"
+}
+
 [[ -f "$CONFIG_FILE" ]] || fail "server config file does not exist: $CONFIG_FILE"
 while IFS= read -r line || [[ -n "$line" ]]; do
   line="${line%$'\r'}"
@@ -63,6 +149,10 @@ fi
 [[ "$CLIENT_TOKENS" != *$'\n'* && "$CLIENT_TOKENS" != *$'\r'* ]] || fail 'TTLAB_CLIENT_TOKENS must not contain newlines'
 if [[ -n "$CLIENT_TOKENS" ]]; then
   [[ "$CLIENT_TOKENS" =~ ^[A-Za-z0-9._~+=,-]+$ ]] || fail 'TTLAB_CLIENT_TOKENS contains characters that are unsafe in a systemd EnvironmentFile'
+fi
+if [[ -n "${TTLAB_AGENT_TOKEN:-}" ]]; then
+  [[ "$TTLAB_AGENT_TOKEN" != *$'\n'* && "$TTLAB_AGENT_TOKEN" != *$'\r'* ]] || fail 'TTLAB_AGENT_TOKEN must not contain newlines'
+  [[ "$TTLAB_AGENT_TOKEN" =~ ^[A-Za-z0-9._~+=,-]+$ ]] || fail 'TTLAB_AGENT_TOKEN contains characters that are unsafe in a systemd EnvironmentFile'
 fi
 
 NODE_MAJOR="$($NODE_BIN -p 'process.versions.node.split(".")[0]')"
@@ -120,12 +210,16 @@ printf '%s\n' \
   "TTLAB_CLIENT_AUTH_ENABLED=$CLIENT_AUTH_ENABLED" \
   "TTLAB_CLIENT_TOKENS=$CLIENT_TOKENS" \
   "TTLAB_AGENT_ENABLED=${TTLAB_AGENT_ENABLED:-0}" \
+  "TTLAB_AGENT_ENGINE=${TTLAB_AGENT_ENGINE:-server-native}" \
   "TTLAB_AGENT_TOKEN=${TTLAB_AGENT_TOKEN:-}" \
   "TTLAB_AGENT_MODEL=${TTLAB_AGENT_MODEL:-deepseek-chat}" \
   "TTLAB_DEEPSEEK_API_KEY=${TTLAB_DEEPSEEK_API_KEY:-}" \
   "TTLAB_AGENT_LLM_URL=${TTLAB_AGENT_LLM_URL:-https://api.deepseek.com}" \
   "TTLAB_AGENT_MAX_SESSIONS=${TTLAB_AGENT_MAX_SESSIONS:-8}" \
-  "TTLAB_AGENT_APPROVAL_TIMEOUT_MS=${TTLAB_AGENT_APPROVAL_TIMEOUT_MS:-60000}" > "$ENV_TMP"
+  "TTLAB_AGENT_APPROVAL_TIMEOUT_MS=${TTLAB_AGENT_APPROVAL_TIMEOUT_MS:-60000}" \
+  "TTLAB_DSH_BASE_URL=${TTLAB_DSH_BASE_URL:-http://127.0.0.1:9333}" \
+  "TTLAB_DSH_WORKDIR=${TTLAB_DSH_WORKDIR:-/var/lib/$SERVER_USER/dsh-work}" \
+  "TTLAB_DSH_TOKEN=${TTLAB_DSH_TOKEN:-}" > "$ENV_TMP"
 install -d -m 0755 "$(dirname "$ENV_FILE")"
 install -o "$SERVER_USER" -g "$SERVER_USER" -m 0600 "$ENV_TMP" "$ENV_FILE"
 rm -f -- "$ENV_TMP"
@@ -170,3 +264,10 @@ fi
 
 log "deployed Server release $VERSION"
 log "health endpoint: http://127.0.0.1:$PORT/healthz"
+
+# The dsh (DeepSeek Harness) agent engine is an optional, separately managed
+# local service the Server gateway drives over its HTTP API. Deploy it only
+# when the agent is enabled and configured to use the dsh engine.
+if [[ "${TTLAB_AGENT_ENABLED:-0}" == 1 && "${TTLAB_AGENT_ENGINE:-server-native}" == 'dsh' ]]; then
+  deploy_dsh_agent
+fi

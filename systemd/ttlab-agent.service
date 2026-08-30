@@ -1,0 +1,28 @@
+# TTLAB Agent — DeepSeek Harness (dsh) web service.
+#
+# Reference unit installed by scripts/deploy-server.sh when
+# TTLAB_AGENT_ENABLED=1 and TTLAB_AGENT_ENGINE=dsh. The deploy script
+# resolves the real `dsh` binary path and writes the generated unit under
+# /etc/systemd/system/ttlab-agent.service; this file documents the expected
+# layout. Keys for the dsh DeepSeek adapter come from /etc/ttlab/dsh.env
+# (DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL), produced by the deploy script.
+
+[Unit]
+Description=TTLAB Agent (DeepSeek Harness dsh web service)
+After=network-online.target ttlab-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/ttlab/dsh.env
+ExecStart=/usr/local/bin/dsh web --port 9333 --no-open
+User=ttlab-server
+Group=ttlab-server
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

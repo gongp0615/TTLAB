@@ -1,0 +1,28 @@
+# TTLAB dsh web profile patch layer (shipped by scripts/deploy-server.sh).
+# A top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+# TTLAB MCP server: expose TTLAB tools to the dsh agent loop.
+# When TTLAB_AGENT_TOKEN is set, deploy-server.sh writes the installed copy
+# with an authorization header on this MCP client.
+- insert:
+    - id: mcp-client-ttlab
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        transport: streamable-http
+        serverName: ttlab
+        url: http://127.0.0.1:9000/mcp/v1
+        headers: {}
+        failOnStartupError: false
+# ask_user_question: the approval bridge for high-risk TTLAB operations
+# (MCP returns APPROVAL_REQUIRED, the agent asks the operator via this tool).
+# The default approval policy ("ask") gates dangerous built-in tool calls and
+# surfaces them to the TTLAB chat panel through the gateway.
+- insert:
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+# TTLAB approval gate: intercepts high-risk TTLAB MCP tool calls before they
+# reach the MCP server and routes them through the dsh approval service
+# (approval/requested -> TTLAB chat panel -> /api/respond).
+- insert:
+    - id: ttlab-approval-gate
+      name: './ttlab-approval-gate.js'

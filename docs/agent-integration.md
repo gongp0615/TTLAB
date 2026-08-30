@@ -47,6 +47,7 @@ Linux Client ... (仅经 Server 通信，协议不变)
 ### 3.1 dsh Agent 服务
 
 - 独立进程，systemd 管理（`ttlab-agent.service`），运行于 Server 宿主机。
+- 部署方式：生产环境由 `scripts/deploy-server.sh` 在 `TTLAB_AGENT_ENABLED=1` 且 `TTLAB_AGENT_ENGINE=dsh` 时自动完成——写 `/etc/ttlab/dsh.env`（注入 `DEEPSEEK_API_KEY`）、向 Server 服务用户安装 dsh web profile（仓库 `deploy/dsh-web-profile/`）、生成并启用 `ttlab-agent.service`；开发环境手动启动用 `scripts/start-dsh.sh`（从 `server.env` 读取并注入密钥）。
 - 通过 `dsh web` 常驻服务（绑定 localhost）暴露本地 API；TTLAB Server 网关作为其 HTTP 客户端驱动会话（见 3.3）。
 - 在 dsh web 中配置 DeepSeek API Key 与模型（`deepseek-chat` / `deepseek-reasoner`），并把 TTLAB MCP Server（`/mcp/v1`）加入 dsh 的 MCP 列表。
 - 双入口：
@@ -219,7 +220,7 @@ GET  /api/v1/agent/sessions/:id/messages（后续）
 
 在安装 dsh 的机器（Server 宿主机）上：
 
-1. 以 `dsh web` 常驻服务启动（绑定 localhost，如 `--port 9333`），systemd 管理。
+1. 启动 dsh 常驻服务：生产环境执行 `./scripts/deploy-server.sh`（engine=dsh 时自动部署 `ttlab-agent.service`，绑定 localhost，如 `--port 9333`）；开发环境运行 `./scripts/start-dsh.sh`。也可手动 `dsh web --port 9333 --no-open`。
 2. 在 dsh web 中配置 DeepSeek API Key，并把 TTLAB 配置为 dsh 的 MCP 服务器：
    - 连接地址：`http://127.0.0.1:9000/mcp/v1`，`Authorization: Bearer <TTLAB_AGENT_TOKEN>`。
 3. 在 web profile 的 `cordis.patch.yml` 中：
@@ -370,7 +371,7 @@ TTLAB_LOG_MAX_SCAN_BYTES=67108864         单查询扫描字节预算
 ## 11. 部署与运维
 
 - logstore 随 Server 进程部署，启动自动创建日志目录（`0750`）并按期清理。
-- Agent 网关随 Server 进程运行，无需独立服务；接入 dsh 时可选部署 `ttlab-agent.service`，密钥通过 systemd `EnvironmentFile` 注入。
+- Agent 网关随 Server 进程运行，无需独立服务；接入 dsh 时由 `deploy-server.sh` 部署 `ttlab-agent.service`（参考 [systemd/ttlab-agent.service](../systemd/ttlab-agent.service)），密钥通过 `EnvironmentFile=/etc/ttlab/dsh.env` 注入；开发环境用 `scripts/start-dsh.sh`。
 - 日志目录建议独立分区，监控磁盘水位（后续阶段接入告警）。
 - 回滚：`TTLAB_AGENT_ENABLED=0` 可整体停用 Agent 能力，logstore 落盘不受影响。
 
@@ -379,9 +380,9 @@ TTLAB_LOG_MAX_SCAN_BYTES=67108864         单查询扫描字节预算
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | A | logstore 文件日志 + 日志/审计查询 API | 已完成 |
-| B | TTLAB MCP Server + dsh 接入 | MCP Server 已完成，dsh 实际联调待网络可用 |
+| B | TTLAB MCP Server + dsh 接入 | MCP Server 已完成，dsh 已联调（本地 `dsh web` + 聊天面板通信测试通过） |
 | C | Agent 网关（server-native 引擎）+ Web 聊天面板 + 写操作审计 | 已完成 |
-| D | dsh 引擎（DshEngine）：Web 会话 1:1 映射 dsh 会话、本地 API 驱动、SSE 事件翻译、提问/审批转发 | 已实现，待真实 dsh 环境联调 |
+| D | dsh 引擎（DshEngine）：Web 会话 1:1 映射 dsh 会话、本地 API 驱动、SSE 事件翻译、提问/审批转发 | 已实现，真实 dsh 环境已完成联调 |
 | E | 运维自动化（故障诊断、健康报告、事件订阅监控） | 未开始 |
 
 每个阶段交付前必须同步更新本文档、`project-guide.md` 和测试，并满足 `PROJECT_RULES.md` 交付标准。
