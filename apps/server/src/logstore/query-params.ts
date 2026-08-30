@@ -43,6 +43,11 @@ export function parseLogQuery(search: URLSearchParams): LogQueryOptions {
     if (offset > MAX_OFFSET) throw new QueryParamError(`offset must not exceed ${MAX_OFFSET}`);
     options.offset = offset;
   }
+  const reverse = search.get('reverse');
+  if (reverse !== null) {
+    if (reverse !== '1' && reverse !== 'true') throw new QueryParamError('reverse must be 1 or true');
+    options.reverse = true;
+  }
   return options;
 }
 

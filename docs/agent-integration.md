@@ -159,8 +159,9 @@ GET  /api/v1/agent/sessions/:id/messages（后续）
 | `keyword` | 大小写不敏感子串匹配 | - |
 | `limit` | 1..1000 | 100 |
 | `offset` | 0..100000 | 0 |
+| `reverse` | `1`/`true` 时返回窗口内最晚条目，最新在前；`offset` 从最新往回翻页 | 否 |
 
-响应：`{ data, hasMore, nextOffset, truncated }`。`truncated=true` 表示扫描字节预算耗尽，返回结果可能缺失最早部分数据。
+响应：`{ data, hasMore, nextOffset, truncated }`。`truncated=true` 表示扫描字节预算耗尽，返回结果可能缺失最早部分数据；`reverse=1` 时可能缺失最新部分数据。
 
 `/api/v1/audit` 复用 `/api/v1/logs/query` 参数，强制 `type=audit`。
 

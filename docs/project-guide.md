@@ -460,7 +460,7 @@ GET  /agent/v1/releases/:version/:artifact
 ```bash
 curl 'http://127.0.0.1/api/v1/logs/query?type=device&clientId=<client-id>&keyword=error'
 curl 'http://127.0.0.1/api/v1/logs/query?type=command&commandId=<command-id>'
-curl 'http://127.0.0.1/api/v1/logs/query?type=event&type=error&limit=200'
+curl 'http://127.0.0.1/api/v1/logs/query?type=event&type=error&limit=200&reverse=1'
 curl 'http://127.0.0.1/api/v1/audit?keyword=command.dispatch'
 ```
 

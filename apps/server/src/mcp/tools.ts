@@ -39,6 +39,7 @@ const logQuerySchema: Record<string, unknown> = {
     keyword: { type: 'string', description: 'case-insensitive substring search over the whole entry' },
     limit: { type: 'integer', minimum: 1, maximum: 1000, description: 'max results; defaults to 100' },
     offset: { type: 'integer', minimum: 0, maximum: 100000, description: 'pagination offset; defaults to 0' },
+    reverse: { type: 'boolean', description: 'return the most recent entries first; offset counts from the newest' },
   },
   additionalProperties: false,
 };
@@ -51,6 +52,7 @@ function toLogQueryOptions(args: Record<string, unknown>): LogQueryOptions {
   }
   if (typeof args.limit === 'number') options.limit = args.limit;
   if (typeof args.offset === 'number') options.offset = args.offset;
+  if (args.reverse === true) options.reverse = true;
   return options;
 }
 

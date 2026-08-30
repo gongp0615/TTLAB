@@ -187,6 +187,35 @@ export class LogStore {
     let scannedBytes = 0;
     let truncated = false;
 
+    if (options.reverse === true) {
+      // 逆序查询：按日期/文件倒序扫描整个窗口（受字节预算约束），返回最晚的条目、最新在前。
+      // 不能像正向查询那样收集满 target 即停止，否则会漏掉窗口末尾（最新）的数据。
+      outer:
+      for (const type of types) {
+        for (const date of [...dateRange(fromDate, toDate)].reverse()) {
+          const files = this.filesFor(type, date, filter);
+          for (const filePath of [...files].reverse()) {
+            const budget = this.maxScanBytes - scannedBytes;
+            const result = await this.scanFile(filePath, filter, Math.max(budget, 0));
+            scannedBytes += result.bytes;
+            matched.push(...result.entries);
+            if (result.budgetExceeded || scannedBytes >= this.maxScanBytes) {
+              truncated = true;
+              break outer;
+            }
+          }
+        }
+      }
+      matched.sort((a, b) => b.ts.localeCompare(a.ts));
+      const data = matched.slice(offset, offset + limit);
+      return {
+        data,
+        hasMore: matched.length > offset + limit,
+        nextOffset: offset + data.length,
+        truncated,
+      };
+    }
+
     outer:
     for (const type of types) {
       for (const date of dateRange(fromDate, toDate)) {

@@ -29,6 +29,7 @@ export interface LogQueryOptions {
   keyword?: string;
   limit?: number;
   offset?: number;
+  reverse?: boolean;
 }
 
 export interface LogQueryResult {

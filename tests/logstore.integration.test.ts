@@ -141,6 +141,28 @@ test('Server persists device logs, command lifecycle, and audit to the log store
     const errorBody = await errorResponse.json() as { data: LogEntry[] };
     assert.ok(errorBody.data.every((entry) => entry.type === 'error'));
 
+    // reverse query returns the newest entries first
+    const reverseResponse = await fetch(`http://127.0.0.1:${port}/api/v1/logs/query?type=event&limit=10&reverse=1`);
+    assert.equal(reverseResponse.status, 200);
+    const reverseBody = await reverseResponse.json() as { data: LogEntry[] };
+    assert.ok(reverseBody.data.length > 0, 'reverse query must return event entries');
+    const timestamps = reverseBody.data.map((entry) => entry.ts);
+    assert.deepEqual(timestamps, [...timestamps].sort((a, b) => b.localeCompare(a)), 'reverse must return newest first');
+
+    // 触发一条协议错误，验证 reverse 模式下近期 error 也能被查询到
+    socket.send('this is not a valid envelope');
+    await waitUntil(async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/v1/logs/query?type=error&limit=5&reverse=1`);
+      if (response.status !== 200) return false;
+      const body = await response.json() as { data: LogEntry[] };
+      return body.data.some((entry) => entry.data.code === 'PROTOCOL_ERROR');
+    });
+
+    // invalid reverse value must return INVALID_ARGUMENT
+    const invalidReverse = await fetch(`http://127.0.0.1:${port}/api/v1/logs/query?type=event&reverse=abc`);
+    assert.equal(invalidReverse.status, 400);
+    assert.equal((await invalidReverse.json()).error.code, 'INVALID_ARGUMENT');
+
     // raw files must exist on disk for device logs
     const date = new Date().toISOString().slice(0, 10);
     const deviceFile = join(root, 'logs', 'device', date, 'client-e2e.jsonl');

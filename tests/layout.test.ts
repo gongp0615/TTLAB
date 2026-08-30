@@ -132,7 +132,7 @@ test('system log panel sits below the dashboard grid and above the footer', () =
 test('web console consumes system.log events and loads event/error history', () => {
   assert.ok(appJs.includes("envelope.type === 'system.log'"), 'events handler must consume system.log envelopes');
   assert.ok(appJs.includes('addSystemLog(envelope.payload)'), 'system.log payload must be appended to the system log output');
-  assert.ok(appJs.includes("'/api/v1/logs/query?type=event&type=error&limit=200'"), 'history must be fetched for event and error log types');
+  assert.ok(appJs.includes("'/api/v1/logs/query?type=event&type=error&limit=200&reverse=1'"), 'history must be fetched for event and error log types in reverse order');
   assert.ok(appJs.includes("document.querySelector('#systemLogOutput')"), 'app must bind the system log output element');
 });
 

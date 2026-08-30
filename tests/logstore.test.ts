@@ -173,6 +173,95 @@ test('query paginates with limit, offset, and hasMore', async () => {
   }
 });
 
+test('query with reverse returns the most recent entries first', async () => {
+  const { store, root } = createStore();
+  try {
+    for (let index = 1; index <= 5; index += 1) {
+      store.write(deviceEntry(tsAt(-index * 1000), 'client-001', 'tvbox:one', index, `line ${index}\n`));
+    }
+    const result = await store.query({ types: ['device'], reverse: true, limit: 3 });
+    assert.equal(result.data.length, 3);
+    // sequence 1 的 ts 最大，reverse 应把它排在第一位
+    assert.equal(result.data[0]?.data.sequence, 1);
+    assert.equal(result.data[1]?.data.sequence, 2);
+    assert.equal(result.data[2]?.data.sequence, 3);
+    assert.equal(result.hasMore, true);
+    assert.equal(result.nextOffset, 3);
+  } finally {
+    void store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('query with reverse paginates backward from the newest entry', async () => {
+  const { store, root } = createStore();
+  try {
+    for (let index = 1; index <= 5; index += 1) {
+      store.write(deviceEntry(tsAt(-index * 1000), 'client-001', 'tvbox:one', index, `line ${index}\n`));
+    }
+    const first = await store.query({ types: ['device'], reverse: true, limit: 2 });
+    assert.deepEqual(first.data.map((entry) => entry.data.sequence), [1, 2]);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.nextOffset, 2);
+
+    const second = await store.query({ types: ['device'], reverse: true, limit: 2, offset: first.nextOffset });
+    assert.deepEqual(second.data.map((entry) => entry.data.sequence), [3, 4]);
+    assert.equal(second.hasMore, true);
+    assert.equal(second.nextOffset, 4);
+
+    const last = await store.query({ types: ['device'], reverse: true, limit: 2, offset: second.nextOffset });
+    assert.deepEqual(last.data.map((entry) => entry.data.sequence), [5]);
+    assert.equal(last.hasMore, false);
+  } finally {
+    void store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('query with reverse includes recent error entries even when events exceed the limit', async () => {
+  const { store, root } = createStore();
+  try {
+    // 写入超过 limit 的 event（最旧在前），再写入一条更近的 error。
+    // 正向查询会因 event 数量先达到 target 而停止扫描，永远看不到 error；
+    // reverse 必须扫描完整窗口并把近期 error 纳入结果。
+    for (let index = 1; index <= 15; index += 1) {
+      store.write({ ts: tsAt(-index * 1000), type: 'event', clientId: 'client-001', data: { action: 'client.connected' } });
+    }
+    store.write({ ts: tsAt(-100), type: 'error', clientId: 'client-001', data: { code: 'DEVICE_OFFLINE', message: 'recent failure' } });
+    const result = await store.query({ types: ['event', 'error'], limit: 5, reverse: true });
+    assert.equal(result.data.length, 5);
+    assert.equal(result.data[0]?.type, 'error');
+    assert.equal(result.data[0]?.data.code, 'DEVICE_OFFLINE');
+    assert.ok(result.data.slice(1).every((entry) => entry.type === 'event'));
+  } finally {
+    void store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('query with reverse respects time range, client, and keyword filters', async () => {
+  const { store, root } = createStore();
+  try {
+    store.write(deviceEntry(tsAt(-6000), 'client-001', 'tvbox:one', 1, 'boot complete\n'));
+    store.write(deviceEntry(tsAt(-5000), 'client-002', 'tvbox:two', 1, 'usb error\n'));
+    store.write(deviceEntry(tsAt(-4000), 'client-001', 'tvbox:one', 2, 'hdmi switched\n'));
+
+    const byRange = await store.query({ types: ['device'], reverse: true, from: tsAt(-5500), to: tsAt(-4500) });
+    assert.equal(byRange.data.length, 1);
+    assert.equal(byRange.data[0]?.data.sequence, 1);
+
+    const byClient = await store.query({ types: ['device'], reverse: true, clientId: 'client-001' });
+    assert.deepEqual(byClient.data.map((entry) => entry.data.sequence), [2, 1]);
+
+    const byKeyword = await store.query({ types: ['device'], reverse: true, keyword: 'USB ERRoR' });
+    assert.equal(byKeyword.data.length, 1);
+    assert.equal(byKeyword.data[0]?.clientId, 'client-002');
+  } finally {
+    void store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('query marks results truncated when the scan byte budget is exhausted', async () => {
   const { store, root } = createStore({ maxScanBytes: 128 });
   try {

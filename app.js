@@ -432,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   const loadSystemLogHistory = async () => {
     try {
-      const response = await fetch('/api/v1/logs/query?type=event&type=error&limit=200');
+      const response = await fetch('/api/v1/logs/query?type=event&type=error&limit=200&reverse=1');
       if (!response.ok) throw new Error('Server 返回错误');
       const body = await response.json();
       for (const entry of body.data ?? []) systemLogIndex.set(systemLogKey(entry), entry);

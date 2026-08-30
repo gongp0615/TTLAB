@@ -104,7 +104,7 @@ Server 将系统消息以结构化日志条目（LogEntry）推送给所有连�
 - `type` 为 `error` 时，`data.code` 为错误码、`data.message` 为错误描述（错误日志为 Server 内部日志类别，可经 `GET /api/v1/logs/query?type=error` 查询）。
 - 该信封仅由 Server 发送给 Web 控制台；Client 会话协议不接收此类型，`parseEnvelope` 会将其判为协议错误。
 
-Web 控制台实时接收 `system.log`，历史数据通过 `GET /api/v1/logs/query?type=event&type=error&limit=200` 拉取。
+Web 控制台实时接收 `system.log`，历史数据通过 `GET /api/v1/logs/query?type=event&type=error&limit=200&reverse=1` 拉取（`reverse=1` 返回最近 200 条，最新在前）。
 
 ## 4. 指令消息
 
