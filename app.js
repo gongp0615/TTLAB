@@ -191,23 +191,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelector('#commandDescription').textContent = operation.description ?? '';
     if (operation.operation === 'firmware.flash') {
       document.querySelector('#commandFields').innerHTML = `
-        <div class="command-field"><label>固件版本 *</label><select name="version" id="firmwareVersionSelect"><option value="">加载中...</option></select></div>
-        <div class="command-field"><label>固件文件 *</label><input name="artifact" id="firmwareArtifactInput" type="text" readonly required /></div>`;
+        <div class="command-field"><label>固件版本 *</label><select name="version" id="firmwareVersionSelect"><option value="">加载中...</option></select></div>`;
       const versionSelect = document.querySelector('#firmwareVersionSelect');
-      const artifactInput = document.querySelector('#firmwareArtifactInput');
       const compatible = (releases) => releases.filter((item) => (item.deviceTypes ?? []).includes(device.deviceType));
       const populate = (releases) => {
         const matches = compatible(releases);
         versionSelect.innerHTML = matches.length ? matches.map((item) => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)} · ${escapeHtml(item.artifact)}</option>`).join('') : '<option value="">暂无匹配该设备分类的固件</option>';
-        const selected = matches.find((item) => item.version === versionSelect.value);
-        artifactInput.value = selected?.artifact ?? '';
       };
       populate(firmwareReleases);
       void fetch('/api/v1/firmware/releases').then((response) => response.json()).then((body) => { firmwareReleases = body.data ?? []; populate(firmwareReleases); }).catch(() => { versionSelect.innerHTML = '<option value="">固件列表加载失败</option>'; });
-      versionSelect.addEventListener('change', () => {
-        const selected = compatible(firmwareReleases).find((item) => item.version === versionSelect.value);
-        artifactInput.value = selected?.artifact ?? '';
-      });
     } else {
       document.querySelector('#commandFields').innerHTML = (operation.parameters ?? []).map((schema) => {
         const label = schema.label ?? schema.name;
@@ -247,6 +239,15 @@ document.addEventListener('DOMContentLoaded', () => {
       parameters[schema.name] = value;
     }
     if (!valid) return;
+    if (operation.operation === 'firmware.flash') {
+      // artifact 由所选版本自动推导，不再在弹窗中展示为可编辑控件
+      const release = firmwareReleases.find((item) => item.version === parameters.version && (item.deviceTypes ?? []).includes(device.deviceType));
+      if (!release) {
+        showCommandResult('请先选择固件版本', 'error');
+        return;
+      }
+      parameters.artifact = release.artifact;
+    }
     if (operation.risk === 'high') {
       pendingCommand = { device, operation, parameters };
       document.querySelector('#confirmMessage').textContent = `确定要对 ${device.displayName} 执行“${operation.displayName ?? operation.operation}”吗？此操作可能导致设备不可用。`;
