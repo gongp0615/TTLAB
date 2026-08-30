@@ -195,6 +195,7 @@ fi
 ln -s -- "$RELEASE_DIR" "$INSTALL_ROOT/current.next.$$"
 mv -Tf -- "$INSTALL_ROOT/current.next.$$" "$INSTALL_ROOT/current"
 
+install -d -m 0755 "$(dirname "$ENV_FILE")"
 ENV_TMP="$(mktemp "${ENV_FILE}.XXXXXX")"
 umask 077
 printf '%s\n' \
@@ -220,7 +221,6 @@ printf '%s\n' \
   "TTLAB_DSH_BASE_URL=${TTLAB_DSH_BASE_URL:-http://127.0.0.1:9333}" \
   "TTLAB_DSH_WORKDIR=${TTLAB_DSH_WORKDIR:-/var/lib/$SERVER_USER/dsh-work}" \
   "TTLAB_DSH_TOKEN=${TTLAB_DSH_TOKEN:-}" > "$ENV_TMP"
-install -d -m 0755 "$(dirname "$ENV_FILE")"
 install -o "$SERVER_USER" -g "$SERVER_USER" -m 0600 "$ENV_TMP" "$ENV_FILE"
 rm -f -- "$ENV_TMP"
 
