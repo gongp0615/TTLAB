@@ -9,25 +9,9 @@ import type { McpServerContext } from '../apps/server/src/mcp/index.js';
 
 class FakeSink implements AgentSink {
   readonly messages: AgentServerMessage[] = [];
-  private waiters: Array<{ predicate: (message: AgentServerMessage) => boolean; resolve: (message: AgentServerMessage) => void }> = [];
 
   send(message: AgentServerMessage): void {
     this.messages.push(message);
-    for (const waiter of this.waiters) {
-      if (waiter.predicate(message)) {
-        this.waiters = this.waiters.filter((item) => item !== waiter);
-        waiter.resolve(message);
-      }
-    }
-  }
-
-  waitFor(predicate: (message: AgentServerMessage) => boolean): Promise<AgentServerMessage> {
-    const existing = this.messages.find(predicate);
-    if (existing !== undefined) return Promise.resolve(existing);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('waitFor timeout')), 3_000);
-      this.waiters.push({ predicate, resolve: (message) => { clearTimeout(timer); resolve(message); } });
-    });
   }
 }
 
@@ -40,7 +24,7 @@ function queuedLlm(results: Array<LlmChatResult>): LlmClient {
   } };
 }
 
-function fakeContext(sink: FakeSink, approvals: ApprovalManager, overrides: Partial<McpServerContext> = {}): { context: AgentTurnContext } {
+function fakeContext(sink: FakeSink, overrides: Partial<McpServerContext> = {}): { context: AgentTurnContext } {
   const base: McpServerContext = {
     serverName: 'ttlab',
     serverVersion: 'test',
@@ -54,7 +38,7 @@ function fakeContext(sink: FakeSink, approvals: ApprovalManager, overrides: Part
     dispatchUpdate: () => ({ ok: false as const, error: { code: 'CLIENT_OFFLINE', message: 'offline', retryable: true } }),
   };
   const mcpContext: McpServerContext = { ...base, ...overrides };
-  return { context: { sessionId: 'session-1', sink, approvals, mcpContext, auditApproval: () => undefined } };
+  return { context: { sessionId: 'session-1', sink, mcpContext } };
 }
 
 test('system prompt reports only the configured model and forbids invented identity', () => {
@@ -71,6 +55,7 @@ test('system prompt restricts scope to TTLAB and requires tool-based connectivit
   assert.match(prompt, /test connectivity or communication/);
   assert.match(prompt, /verify it with a read-only tool/);
   assert.match(prompt, /outside that scope/);
+  assert.match(prompt, /execute immediately and are recorded in the audit log/);
 });
 
 test('approval manager resolves responses and auto-rejects on timeout', async () => {
@@ -91,8 +76,7 @@ test('approval manager rejects all pending approvals for a closed session', asyn
 
 test('engine streams a plain text reply without tools', async () => {
   const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
-  const { context } = fakeContext(sink, approvals);
+  const { context } = fakeContext(sink);
   const engine = new ServerNativeEngine({ llm: queuedLlm([{ content: '一切正常。' }]) });
   const messages = await engine.runTurn(context, [], '查一下状态');
   assert.equal(messages.filter((message) => message.role === 'user').length, 1);
@@ -102,8 +86,7 @@ test('engine streams a plain text reply without tools', async () => {
 
 test('engine keeps assistant replies in history so later turns retain context', async () => {
   const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
-  const { context } = fakeContext(sink, approvals);
+  const { context } = fakeContext(sink);
   const engine = new ServerNativeEngine({ llm: queuedLlm([{ content: '第一轮回复。' }, { content: '第二轮回复。' }]) });
   const afterTurn1 = await engine.runTurn(context, [], '你好');
   const assistantReplies = afterTurn1.filter((message) => message.role === 'assistant' && message.toolCalls === undefined);
@@ -117,8 +100,7 @@ test('engine keeps assistant replies in history so later turns retain context', 
 
 test('engine runs a tool call and then replies with text', async () => {
   const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
-  const { context } = fakeContext(sink, approvals, {
+  const { context } = fakeContext(sink, {
     queryLogs: async () => ({ data: [{ ts: '2026-08-29T00:00:00.000Z', type: 'device', clientId: 'client-1', deviceId: 'tvbox:1', data: { sequence: 1, data: 'ok' } }], hasMore: false, nextOffset: 0, truncated: false }),
   });
   const engine = new ServerNativeEngine({
@@ -133,11 +115,10 @@ test('engine runs a tool call and then replies with text', async () => {
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.done'));
 });
 
-test('engine requests approval for high-risk commands and dispatches after approval', async () => {
+test('engine dispatches high-risk commands immediately without approval', async () => {
   const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
   let dispatchedActor = '';
-  const { context } = fakeContext(sink, approvals, {
+  const { context } = fakeContext(sink, {
     dispatchCommand: (input) => {
       dispatchedActor = input.actor;
       assert.equal(input.operation, 'device.reboot');
@@ -150,59 +131,16 @@ test('engine requests approval for high-risk commands and dispatches after appro
       { content: '重启已下发。' },
     ]),
   });
-  const turn = engine.runTurn(context, [], '重启设备');
-  const approval = await sink.waitFor((message) => message.type === 'agent.approval.request');
-  assert.equal(approval.tool, 'command_execute');
-  approvals.respond(approval.approvalId as string, 'approved');
-  await turn;
+  await engine.runTurn(context, [], '重启设备');
   assert.equal(dispatchedActor, 'agent:session-1');
+  assert.ok(!sink.messages.some((message) => message.type === 'agent.approval.request'));
+  assert.ok(sink.messages.some((message) => message.type === 'agent.tool.status' && message.tool === 'command_execute' && message.toolStatus === 'done'));
   assert.ok(sink.messages.some((message) => message.type === 'agent.message.done'));
-});
-
-test('engine reports rejection when the operator declines a high-risk command', async () => {
-  const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
-  let dispatched = false;
-  const { context } = fakeContext(sink, approvals, {
-    dispatchCommand: () => { dispatched = true; return { ok: true, commandId: 'cmd-x' }; },
-  });
-  const engine = new ServerNativeEngine({
-    llm: queuedLlm([
-      { toolCalls: [{ id: 'call-x', name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
-      { content: '已取消。' },
-    ]),
-  });
-  const turn = engine.runTurn(context, [], '重启');
-  const approval = await sink.waitFor((message) => message.type === 'agent.approval.request');
-  approvals.respond(approval.approvalId as string, 'rejected');
-  await turn;
-  assert.equal(dispatched, false);
-  const toolError = sink.messages.find((message) => message.type === 'agent.tool.status' && message.toolStatus === 'error');
-  assert.ok(toolError?.result?.text.includes('APPROVAL_REJECTED'));
-});
-
-test('engine times out pending approvals and adapts', async () => {
-  const sink = new FakeSink();
-  const approvals = new ApprovalManager(30, () => undefined);
-  let dispatched = false;
-  const { context } = fakeContext(sink, approvals, {
-    dispatchCommand: () => { dispatched = true; return { ok: true, commandId: 'cmd-x' }; },
-  });
-  const engine = new ServerNativeEngine({
-    llm: queuedLlm([
-      { toolCalls: [{ id: 'call-x', name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'device.reboot' } }] },
-      { content: '审批超时，已取消。' },
-    ]),
-  });
-  await engine.runTurn(context, [], '重启');
-  assert.equal(dispatched, false);
-  assert.ok(sink.messages.some((message) => message.type === 'agent.tool.status' && message.toolStatus === 'error' && message.result?.text.includes('APPROVAL_TIMEOUT')));
 });
 
 test('engine stops when the tool call loop exceeds the iteration limit', async () => {
   const sink = new FakeSink();
-  const approvals = new ApprovalManager(5_000, () => undefined);
-  const { context } = fakeContext(sink, approvals);
+  const { context } = fakeContext(sink);
   const engine = new ServerNativeEngine({
     llm: { chat: async () => ({ toolCalls: [{ id: 'c', name: 'device_list', arguments: {} }] }) },
     maxIterations: 3,

@@ -3,7 +3,7 @@ export { DeepSeekApiClient, LlmError } from './llm.js';
 export type { LlmChatRequest, LlmChatResult, LlmClient, LlmToolCall, LlmToolSpec } from './llm.js';
 export { AgentGateway } from './gateway.js';
 export type { AgentGatewayOptions } from './gateway.js';
-export { ServerNativeEngine, approvalReason, isApprovalRequired } from './engine.js';
+export { ServerNativeEngine } from './engine.js';
 export type { AgentSink, AgentTurnContext, ServerNativeEngineOptions } from './engine.js';
 export { ServerNativeEngineAdapter } from './engine-adapter.js';
 export type { AgentEngine, AgentEngineOpenContext } from './engine-adapter.js';

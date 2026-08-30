@@ -1,7 +1,6 @@
-import { highRiskOperations, toolDefinitions, type McpServerContext, type ToolResult } from '../mcp/index.js';
-import { ApprovalManager } from './approvals.js';
+import { toolDefinitions, type McpServerContext, type ToolResult } from '../mcp/index.js';
 import type { LlmClient } from './llm.js';
-import type { AgentServerMessage, ApprovalDecision, ChatMessage } from './types.js';
+import type { AgentServerMessage, ChatMessage } from './types.js';
 
 export interface AgentSink {
   send(message: AgentServerMessage): void;
@@ -10,26 +9,12 @@ export interface AgentSink {
 export interface AgentTurnContext {
   sessionId: string;
   sink: AgentSink;
-  approvals: ApprovalManager;
   mcpContext: McpServerContext;
-  auditApproval: (approvalId: string, tool: string, decision: ApprovalDecision, args: Record<string, unknown>) => void;
 }
 
 export interface ServerNativeEngineOptions {
   llm: LlmClient;
   maxIterations?: number;
-}
-
-export function isApprovalRequired(tool: string, args: Record<string, unknown>): boolean {
-  if (tool === 'client_update') return true;
-  if (tool === 'command_execute' && typeof args.operation === 'string' && highRiskOperations.has(args.operation)) return true;
-  return false;
-}
-
-export function approvalReason(tool: string, args: Record<string, unknown>): string {
-  if (tool === 'command_execute') return `执行设备操作 ${String(args.operation)}（设备 ${String(args.deviceId)}）`;
-  if (tool === 'client_update') return `升级 Client ${String(args.clientId)} 到版本 ${String(args.version)}`;
-  return `调用工具 ${tool}`;
 }
 
 export class ServerNativeEngine {
@@ -72,32 +57,6 @@ export class ServerNativeEngine {
   private async executeTool(context: AgentTurnContext, call: { id: string; name: string; arguments: Record<string, unknown> }): Promise<ToolResult> {
     const tool = toolDefinitions.find((item) => item.name === call.name);
     if (tool === undefined) return { text: JSON.stringify({ code: 'TOOL_NOT_FOUND', message: `tool ${call.name} not found`, retryable: false }), isError: true };
-
-    if (isApprovalRequired(call.name, call.arguments)) {
-      const reason = approvalReason(call.name, call.arguments);
-      const handle = context.approvals.request(context.sessionId, call.name, call.arguments, reason);
-      context.sink.send({
-        type: 'agent.approval.request',
-        sessionId: context.sessionId,
-        approvalId: handle.approval.approvalId,
-        tool: call.name,
-        args: call.arguments,
-        reason,
-        expiresAt: new Date(handle.approval.expiresAt).toISOString(),
-      });
-      const decision = await handle.decision;
-      context.auditApproval(handle.approval.approvalId, call.name, decision, call.arguments);
-      if (decision !== 'approved') {
-        return {
-          text: JSON.stringify({
-            code: decision === 'timeout' ? 'APPROVAL_TIMEOUT' : 'APPROVAL_REJECTED',
-            message: decision === 'timeout' ? 'approval request timed out' : 'operation rejected by the operator',
-            retryable: false,
-          }),
-          isError: true,
-        };
-      }
-    }
 
     if (call.name === 'command_execute') {
       const args = call.arguments as { clientId?: string; deviceId: string; operation: string; parameters: Record<string, string> };

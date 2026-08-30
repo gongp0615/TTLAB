@@ -69,7 +69,7 @@ test('tools/call rejects unknown tools and invalid arguments', async () => {
   assert.equal(extra.error.code, -32602);
 });
 
-test('command.execute dispatches both low-risk and high-risk operations (approval enforced upstream by the dsh gate)', async () => {
+test('command.execute dispatches both low-risk and high-risk operations (agent path fully authorized)', async () => {
   const server = await initializedServer();
   const lowRisk = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'command_execute', arguments: { deviceId: 'tvbox:1', operation: 'system.ping' } } }) as JsonRpcResponse;
   const lowPayload = lowRisk.result as { content: Array<{ text: string }>; isError: boolean };

@@ -93,7 +93,7 @@ function startFakeLlm(): Promise<{ port: number; close: () => Promise<void> }> {
   });
 }
 
-test('Agent gateway runs a full chat turn with tool calls, approvals, and audit', async () => {
+test('Agent gateway runs a full chat turn with tool calls and audit', async () => {
   const llm = await startFakeLlm();
   const port = await freePort();
   const root = mkdtempSync(join(tmpdir(), 'ttlab-agent-e2e-'));
@@ -149,24 +149,18 @@ test('Agent gateway runs a full chat turn with tool calls, approvals, and audit'
     assert.equal(typeof delta.delta, 'string');
     await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.message.done');
 
-    // turn 2: high-risk reboot requires approval, then executes
+    // turn 2: high-risk reboot dispatches immediately (agent fully authorized)
     const rebootExecutePromise = waitForMessage(clientSocket, (value) => value.type === 'command.execute');
     agentSocket.send(JSON.stringify({ type: 'agent.message.submit', sessionId, content: '帮我重启设备' }));
-    const approval = await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.approval.request');
-    assert.equal(approval.tool, 'command_execute');
-    assert.equal((approval.args as { operation?: string }).operation, 'device.reboot');
-    agentSocket.send(JSON.stringify({ type: 'agent.approval.response', sessionId, approvalId: approval.approvalId, decision: 'approved' }));
     const execute = await rebootExecutePromise;
     assert.equal((execute.payload as { operation?: string }).operation, 'device.reboot');
+    await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.tool.status' && message.tool === 'command_execute' && message.toolStatus === 'done');
     await waitForAgentMessage(agentSocket, (message) => message.type === 'agent.message.done');
 
-    // the agent-originated dispatch and approval decisions are audited
+    // the agent-originated dispatch is audited
     const audit = await fetch(`http://127.0.0.1:${port}/api/v1/audit?keyword=command.dispatch`);
     const auditBody = await audit.json() as { data: Array<{ actor?: string; data: Record<string, unknown> }> };
     assert.ok(auditBody.data.some((entry) => typeof entry.actor === 'string' && entry.actor.startsWith('agent:') && entry.data.operation === 'device.reboot'));
-    const approvalAudit = await fetch(`http://127.0.0.1:${port}/api/v1/audit?keyword=approval.decided`);
-    const approvalBody = await approvalAudit.json() as { data: Array<{ data: Record<string, unknown> }> };
-    assert.ok(approvalBody.data.some((entry) => entry.data.decision === 'approved'));
   } finally {
     for (const socket of sockets) socket.close();
     if (child.exitCode === null) {

@@ -169,8 +169,8 @@ test('TTLAB MCP endpoint exposes device, log, audit, and command tools over HTTP
       return textOf(status).includes('"status":"result"');
     });
 
-    // high-risk operations and updates dispatch; approval is enforced upstream
-    // by the dsh approval gate, not by the MCP endpoint itself
+    // high-risk operations and updates dispatch immediately (the agent path
+    // is fully authorized); dispatch is always audited with the actor
     const reboot = await callTool(port, 'command_execute', { deviceId: 'tvbox:mcp', operation: 'device.reboot', parameters: { mode: 'NRM' } });
     assert.equal(toolPayload(reboot).isError, false);
     assert.ok(textOf(reboot).includes('"commandId"'));

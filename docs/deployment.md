@@ -162,8 +162,7 @@ RestartSec=3
 dsh web profile 配置（`~/.dsh/profiles/web/`）：除官方 web profile 外，还需在 `cordis.patch.yml` 中：
 
 - 挂载 TTLAB MCP：`@deepseek-ai/dsh-mcp-client`，`serverName: ttlab`，`url: http://127.0.0.1:9000/mcp/v1`。
-- 挂载 `@deepseek-ai/dsh-tool-ask-user`（审批兜底）。
-- 复制 `scripts/dsh/ttlab-approval-gate.js` 到 profile 目录并挂载（高风险 TTLAB 工具审批门：在工具调用到达 MCP 前经 dsh 审批服务确认）。
+- 挂载 `@deepseek-ai/dsh-tool-ask-user`（可选提问工具，LLM 主动询问操作员时使用）。TTLAB 写操作默认完全授权，无需审批门插件。
 
 然后在 `/etc/ttlab/server.env` 设置：
 

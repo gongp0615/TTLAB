@@ -60,9 +60,7 @@ export class ServerNativeEngineAdapter implements AgentEngine {
     const turnContext: AgentTurnContext = {
       sessionId: webSessionId,
       sink: state.sink,
-      approvals: state.approvals,
       mcpContext: state.mcpContext,
-      auditApproval: state.auditApproval,
     };
     state.messages = await this.engine.runTurn(turnContext, state.messages, content);
   }

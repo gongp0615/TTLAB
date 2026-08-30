@@ -49,7 +49,7 @@
             </div>
           </div>
           <div class="agent-messages" id="agentMessages">
-            <div class="empty-state" id="agentEmpty">打开后即可对话。智能体会通过工具查询设备状态、检索日志并执行操作，高风险操作需要你确认。</div>
+            <div class="empty-state" id="agentEmpty">打开后即可对话。智能体会通过工具查询设备状态、检索日志并执行操作，所有操作均记录审计。</div>
           </div>
           <div class="agent-composer">
             <textarea id="agentInput" rows="1" placeholder="例如：为什么 TVB-02 日志报错？" aria-label="向智能体发送消息"></textarea>
@@ -175,7 +175,7 @@
                     <input type="number" id="settingMaxSessions" min="1" max="100" />
                   </label>
                   <label class="settings-field">
-                    <span class="settings-label">审批超时（毫秒）</span>
+                    <span class="settings-label">提问/审批超时（毫秒）</span>
                     <input type="number" id="settingApprovalTimeoutMs" min="1000" max="3600000" />
                   </label>
                 </div>

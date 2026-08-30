@@ -13,7 +13,7 @@ TTLAB 接入 DeepSeek Harness（dsh）作为集中运维助手，使操作人员
 
 - Agent 永不直接连接 Client 或串口设备，只通过 Server 能力接口操作。
 - Web 控制台只通过 Server API/WebSocket 与系统交互。
-- Agent 的所有写操作走权限检查、审批和审计。
+- Agent 的所有写操作默认完全授权并执行全量审计。
 
 设计决策（2026-08-29 确认）：
 
@@ -30,17 +30,17 @@ TTLAB 接入 DeepSeek Harness（dsh）作为集中运维助手，使操作人员
      │ WSS /api/v1/agent/session              │ MCP client
      ▼                                        ▼
 Server 总控制台 ───────────────────────────► dsh Agent 服务 (独立进程)
-  ├ 认证 / 权限 / 审批                         │  LLM = DeepSeek API
+  ├ 认证 / 权限 / 审计                         │  LLM = DeepSeek API
   ├ 设备管理 / 指令调度                        │  通用工具 (受限)
   ├ 文件日志存储 logstore ◄──────────────┐     │
   ├ TTLAB MCP Server (工具暴露)───────────────┘
-  └ Agent 网关 (聊天代理、会话、审批)
+  └ Agent 网关 (聊天代理、会话、审计)
      │
      ▼
 Linux Client ... (仅经 Server 通信，协议不变)
 ```
 
-核心原则：**TTLAB MCP Server 是唯一的 Agent 工具出口**。无论用户从 dsh Web/TUI 还是 TTLAB 聊天面板发起，Agent 的工具调用最终都落在同一个 MCP Server 上，复用同一套权限、审批和审计。
+核心原则：**TTLAB MCP Server 是唯一的 Agent 工具出口**。无论用户从 dsh Web/TUI 还是 TTLAB 聊天面板发起，Agent 的工具调用最终都落在同一个 MCP Server 上，复用同一套权限、审计和写操作完全授权策略。
 
 ## 3. 组件设计
 
@@ -51,7 +51,7 @@ Linux Client ... (仅经 Server 通信，协议不变)
 - 在 dsh web 中配置 DeepSeek API Key 与模型（`deepseek-chat` / `deepseek-reasoner`），并把 TTLAB MCP Server（`/mcp/v1`）加入 dsh 的 MCP 列表。
 - 双入口：
   - **Web/TUI 模式**：直接使用 dsh 自带界面，配置 TTLAB MCP Server 为 MCP client。
-  - **TTLAB 聊天面板**：TTLAB Server 网关以 `dsh` 引擎驱动 dsh 本地 API，工具、上下文、审批全部由 dsh 处理。
+  - **TTLAB 聊天面板**：TTLAB Server 网关以 `dsh` 引擎驱动 dsh 本地 API，工具、上下文由 dsh 处理。
 - 通用工具（shell/file 等）默认关闭或限定工作目录，以 TTLAB 工具为主。
 
 ### 3.2 TTLAB MCP Server
@@ -66,10 +66,10 @@ Linux Client ... (仅经 Server 通信，协议不变)
 | `log_query` | 日志/事件/指令/审计检索 | 只读 |
 | `audit_query` | 审计查询 | 只读 |
 | `command_status` | 指令状态 | 只读 |
-| `command_execute` | 下发指令 | 写（高风险 `reboot`/`reset` 由 dsh 审批门确认后执行） |
-| `client_update` | 触发升级 | 写（由 dsh 审批门确认后执行） |
+| `command_execute` | 下发指令 | 写（agent 默认完全授权，派发全量审计） |
+| `client_update` | 触发升级 | 写（agent 默认完全授权，派发全量审计） |
 
-只读工具直接放行；写工具按风险执行并全量审计。聊天面板内的 Agent 会话（网关）对高风险写操作走审批流：server-native 拦截于网关引擎；dsh 引擎由 dsh 侧审批门（`ttlab-approval-gate`）在工具调用到达 MCP 前拦截，经 `approval/requested`/`question/requested` 转发到面板，再由 `/api/respond` 回传。
+只读工具直接放行；写工具默认完全授权、直接执行并全量审计。若 dsh 侧的 LLM 主动调用 `ask_user_question` 提问，其 `question/requested` 仍会经网关以审批卡片形式转发到面板，由操作员答复。
 
 端点行为：
 
@@ -87,10 +87,10 @@ Linux Client ... (仅经 Server 通信，协议不变)
 - WebSocket `/api/v1/agent/session`：每个连接一个会话，全局并发上限 `TTLAB_AGENT_MAX_SESSIONS`。
 - 网关通过统一的 `AgentEngine` 适配器驱动两种引擎（`TTLAB_AGENT_ENGINE` 选择）：
   - **`server-native`（默认）**：Server 直接调用 DeepSeek 兼容 API，复用 MCP 工具定义执行工具调用（`ServerNativeEngineAdapter`）。
-  - **`dsh`**：网关作为 dsh 本地 API 的 HTTP 客户端（`DshEngine`），把 Web 会话 1:1 映射到 dsh 会话，上下文、工具循环、审批全部由 dsh 处理。详见 3.6。
+  - **`dsh`**：网关作为 dsh 本地 API 的 HTTP 客户端（`DshEngine`），把 Web 会话 1:1 映射到 dsh 会话，上下文、工具循环由 dsh 处理。详见 3.6。
 - 系统提示词由 `buildSystemPrompt(model)` 在会话建立时动态生成，注入配置中的模型标识，并明确能力边界（仅 TTLAB 平台任务、不得虚构模型/厂商、通信测试须用只读工具验证）。
-- 消息类型见 5.2；会话记录落盘（`agent/` 日志），审批与指令下发写入审计。
-- 审批拦截：高风险写操作暂停 Agent 循环，向面板推送 `agent.approval.request`，超时（`TTLAB_AGENT_APPROVAL_TIMEOUT_MS`）自动拒绝。
+- 消息类型见 5.2；会话记录落盘（`agent/` 日志），指令下发写入审计。
+- 写操作默认完全授权、直接执行；dsh 侧 LLM 若主动发起 `ask_user_question` 提问，仍以审批卡片形式推送面板。
 
 ### 3.6 dsh 引擎（DshEngine）
 
@@ -101,11 +101,11 @@ Linux Client ... (仅经 Server 通信，协议不变)
 | 会话建立 | `POST /api/session.create` `{ sessionId: "ttlab:<key>", cwd }`，同一 `sessionId` 再次调用即恢复同一会话 |
 | 提交消息 | `POST /api/session.prompt` `{ sessionId, mode: "queue", content: [{ type: "text", text }] }` |
 | 实时事件 | `GET /api/events.mux`（SSE），过滤本会话帧后翻译为网关消息 |
-| 审批/提问回传 | `POST /api/respond`（携带 dsh rpcId） |
+| 提问回传 | `POST /api/respond`（携带 dsh rpcId） |
 
 - **会话映射**：Web 面板连接时通过 `agent.session.open` 上报稳定的窗口标识（浏览器 `sessionStorage` 持久化），网关以 `windowKey ?? gatewaySessionId` 作为 dsh 会话键。同一 Web 窗口断线重连后仍指向同一个 dsh 会话，多轮上下文不丢。
 - **事件翻译**：`assistant/message`→`agent.message.delta`；`tool/call`→工具卡片 running；`tool/result`→done/error；`turn/end`→`agent.message.done`；`approval/requested`、`question/requested`→`agent.approval.request`。
-- **审批**：dsh 的 `approval/requested` 与 `ask_user_question` 产生的 `question/requested` 都以审批卡片形式推给面板；面板确认后网关按 `approval/requested`（回传 `allowed-once`/`rejected`）或 `question/requested`（选中肯定项 / 取消）构造 `/api/respond` 载荷。高风险 TTLAB 工具由 dsh 侧 `ttlab-approval-gate` 插件在 `tools/pre-execute` 拦截（见 4），审批通过后工具调用才到达 TTLAB MCP。
+- **提问/审批**：dsh 的 `approval/requested` 与 `ask_user_question` 产生的 `question/requested` 都以审批卡片形式推给面板；面板确认后网关按 `approval/requested`（回传 `allowed-once`/`rejected`）或 `question/requested`（选中肯定项 / 取消）构造 `/api/respond` 载荷。TTLAB 写操作不再强制审批，仅当 dsh 侧 LLM 主动发起提问时才出现审批卡片。
 - **SSE 容错**：事件流中断自动重连，断流时若存在进行中的轮次则向面板报错并重置状态。
 
 ### 3.4 文件日志存储 logstore
@@ -117,23 +117,16 @@ Server 内新增模块 `apps/server/src/logstore/`，负责设备日志、事件
 已实现：
 
 - `index.html`/`app.js`/`styles.css` 增加可折叠聊天面板与悬浮入口。
-- 支持对话、工具调用状态卡片、审批确认按钮、会话状态与断线重连。
-- 完整处理加载中、空数据、网络断开、Server 错误、审批超时等状态。
+- 支持对话、工具调用状态卡片、提问/审批确认按钮、会话状态与断线重连。
+- 完整处理加载中、空数据、网络断开、Server 错误、提问超时等状态。
 
 ## 4. 权限与审批模型
 
 - 当前无 Web 用户认证，会话按连接隔离；`actor` 记录为 `agent:<sessionId>`，Web 用户认证落地后替换为真实用户。
 - **只读工具**：直接放行，全量审计。
-- **写工具（server-native 引擎）**：低风险操作（`ping`/`status`/`switch`）执行前审计；高风险操作（`reboot`/`reset`/升级）必须审批：
-  1. Agent 调用高风险工具时，网关暂停循环并生成 `agent.approval.request`（目标、操作、参数、理由）。
-  2. Web 面板弹出确认卡片，超时（默认 60s）自动拒绝。
-  3. 确认后以 `agent:<sessionId>` 记录审计并执行；拒绝/超时结果回传 Agent，由其调整方案。
-- **写工具（dsh 引擎）**：高风险工具调用由 dsh 侧的审批门（`ttlab-approval-gate` 插件，挂在 `tools/pre-execute`）在**到达 TTLAB MCP 之前**拦截：
-  1. dsh 的 `approval/requested`（或 LLM 主动调用 `ask_user_question` 产生的 `question/requested`）由网关转发为面板的 `agent.approval.request`。
-  2. 面板确认/拒绝后，网关按 rpcId 调用 `POST /api/respond` 回传 dsh（`allowed-once`/`rejected` 或取消）。
-  3. 确认后 dsh 放行并执行工具，TTLAB MCP 完成派发；拒绝则工具调用被拒绝并回传 Agent。
-  4. 审批决策（`approval.decided`）与指令下发（`command.dispatch`）由网关写入审计。
-- 审批决策、指令下发与 Agent 会话均写入审计/会话日志，保证可追溯。
+- **写工具**：agent 默认完全授权，`command_execute`/`client_update` 直接执行并全量审计（actor 为 `agent:<sessionId>`）。
+- **提问/审批卡片**：不再为高风险操作（`reboot`/`reset`/升级）强制要求操作员审批。仅当 dsh 侧 LLM 主动调用 `ask_user_question` 产生 `question/requested` 时，网关以 `agent.approval.request` 推送到面板；面板答复通过 `/api/respond` 回传 dsh。
+- 指令下发与 Agent 会话均写入审计/会话日志，保证可追溯。
 
 ## 5. 协议与接口
 
@@ -150,7 +143,6 @@ POST /mcp/v1                   MCP 端点（dsh 接入）
 WS   /api/v1/agent/session     Agent 会话通道（聊天面板）
 GET  /api/v1/agent/sessions    Agent 会话列表（后续）
 GET  /api/v1/agent/sessions/:id/messages（后续）
-POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 ```
 
 `/api/v1/logs/query` 查询参数：
@@ -181,7 +173,7 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 | --- | --- | --- |
 | `agent.session.open` | `sessionId` | 连接建立后上报稳定的窗口标识（浏览器 `sessionStorage`），dsh 引擎据此映射会话 |
 | `agent.message.submit` | `content` | 提交用户消息 |
-| `agent.approval.response` | `approvalId`、`decision`（`approved`/`rejected`） | 审批确认/拒绝 |
+| `agent.approval.response` | `approvalId`、`decision`（`approved`/`rejected`） | 提问/审批答复（dsh 侧 LLM 主动发起时） |
 
 服务端 → 客户端：
 
@@ -192,7 +184,7 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 | `agent.message.delta` | `delta` | 助手回复文本（当前为非流式，单次发送完整文本） |
 | `agent.message.done` | - | 本轮结束 |
 | `agent.tool.status` | `tool`、`toolStatus`（`running`/`done`/`error`）、`args`、`result` | 工具调用状态 |
-| `agent.approval.request` | `approvalId`、`tool`、`args`、`reason`、`expiresAt` | 高风险操作审批请求 |
+| `agent.approval.request` | `approvalId`、`tool`、`args`、`reason`、`expiresAt` | 提问/审批请求（dsh 侧 LLM 主动发起时） |
 | `agent.error` | `code`、`message` | 错误 |
 
 示例（提交消息）：
@@ -201,18 +193,15 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 { "type": "agent.message.submit", "sessionId": "session_01J...", "content": "为什么 TVB-02 报错？" }
 ```
 
-审批消息：
+提问消息（dsh 侧 LLM 通过 `ask_user_question` 主动发起，面板据此答复）：
 
 ```json
 {
   "type": "agent.approval.request",
   "approvalId": "apr_01J...",
-  "tool": "command_execute",
-  "clientId": "client-001",
-  "deviceId": "tvbox:...",
-  "operation": "device.reboot",
-  "parameters": {},
-  "reason": "修复日志中的异常状态",
+  "tool": "ask_user_question",
+  "args": { "question": "确认对 tvbox:... 执行 device.reboot？" },
+  "reason": "确认对 tvbox:... 执行 device.reboot？",
   "expiresAt": "2026-08-29T10:01:00Z"
 }
 ```
@@ -222,8 +211,7 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
 工具清单与端点行为见 3.2。实现说明：
 
 - `log_query`、`audit_query` 直接调用 logstore 查询模块，入参校验规则与 REST API 一致。
-- `command_execute` 与 REST 指令下发共用同一 `dispatchCommand` 实现（设备/操作/参数校验、指令创建、审计、下发）。
-- `command_execute` 与 REST 指令下发共用同一 `dispatchCommand` 实现（设备/操作/参数校验、指令创建、审计、下发）。高风险操作的审批由 dsh 侧审批门（`ttlab-approval-gate`）在 dsh 工具循环内拦截，MCP 端点执行时已通过审批。
+- `command_execute` 与 REST 指令下发共用同一 `dispatchCommand` 实现（设备/操作/参数校验、指令创建、审计、下发）。写操作默认完全授权，MCP 端点直接派发并全量审计。
 
 ### 5.4 dsh 接入方式
 
@@ -234,8 +222,7 @@ POST /api/v1/agent/approvals/:id   审批确认/拒绝（后续）
    - 连接地址：`http://127.0.0.1:9000/mcp/v1`，`Authorization: Bearer <TTLAB_AGENT_TOKEN>`。
 3. 在 web profile 的 `cordis.patch.yml` 中：
    - 挂载 `@deepseek-ai/dsh-mcp-client`（serverName `ttlab`，url 指向 `/mcp/v1`）。
-   - 挂载 `@deepseek-ai/dsh-tool-ask-user`（审批兜底）。
-   - 挂载 `ttlab-approval-gate.js` 插件（高风险 TTLAB 工具审批门，仓库 `scripts/dsh/ttlab-approval-gate.js`，部署时复制到 profile 目录）。
+   - 挂载 `@deepseek-ai/dsh-tool-ask-user`（可选提问工具，LLM 主动询问操作员时使用）。
 4. TTLAB Server 侧设置：
    - `TTLAB_AGENT_ENABLED=1`、`TTLAB_AGENT_ENGINE=dsh`、`TTLAB_DSH_BASE_URL=http://127.0.0.1:9333`。
 5. dsh 的配置格式以其发布版本为准；接入前可用以下命令验证 TTLAB MCP 端点可用：
@@ -323,21 +310,21 @@ curl -X POST http://127.0.0.1/mcp/v1 \
 2. Agent 调用 `device_list` 确认设备。
 3. Agent 调用 `log_query` 检索最近日志与事件。
 4. Agent 分析定位，给出建议。
-5. 如需执行修复：Agent 调用 `command_execute` → 网关发起审批 → 用户确认 → 执行 → 结果回传。
+5. 如需执行修复：Agent 调用 `command_execute` → 直接派发 → 审计 → 结果回传。
 
 ### 7.2 异常处理
 
 | 场景 | 处理 |
 | --- | --- |
 | LLM 超时/断连 | 网关重试并向用户报告错误 |
-| 审批超时 | 自动拒绝并回传 Agent |
+| dsh 提问超时 | 自动取消并回传 Agent |
 | 日志写盘失败 | 降级为仅实时转发，记录 logstore 错误并保持服务可用 |
 | 并发会话超限 | 返回明确错误码 |
 | 文件扫描预算超限 | 返回截断结果并置 `truncated=true` |
 
 ## 8. 配置项
 
-Agent 相关设置（启用、模型、API Key、API 地址、Agent Token、并发会话数、审批超时）全部写在项目配置文件 `server.env` 中，是唯一配置来源，不读取环境变量。可在 Web 控制台"系统设置 → Agent / 模型设置"页面运行时修改，保存后**原地改写 `server.env` 中对应键**并即时生效（注释和其他配置保留）。
+Agent 相关设置（启用、模型、API Key、API 地址、Agent Token、并发会话数、提问/审批超时）全部写在项目配置文件 `server.env` 中，是唯一配置来源，不读取环境变量。可在 Web 控制台"系统设置 → Agent / 模型设置"页面运行时修改，保存后**原地改写 `server.env` 中对应键**并即时生效（注释和其他配置保留）。
 
 ```text
 TTLAB_AGENT_ENABLED=0                     Agent 功能总开关
@@ -350,7 +337,7 @@ TTLAB_DSH_BASE_URL=http://127.0.0.1:9333  dsh web 本地 API 地址
 TTLAB_DSH_WORKDIR=./data/agent-work        dsh 会话工作目录（cwd）
 TTLAB_DSH_TOKEN=                          dsh 本地 API 鉴权 Token（可选）
 TTLAB_AGENT_MAX_SESSIONS=8                全局并发会话上限
-TTLAB_AGENT_APPROVAL_TIMEOUT_MS=60000     审批超时
+TTLAB_AGENT_APPROVAL_TIMEOUT_MS=60000     dsh 提问/审批超时
 TTLAB_LOG_DIR=./data/logs                 日志目录
 TTLAB_LOG_RETENTION_DAYS=30               日志保留天数
 TTLAB_LOG_FLUSH_MS=500                    日志 flush 间隔
@@ -364,15 +351,15 @@ TTLAB_LOG_MAX_SCAN_BYTES=67108864         单查询扫描字节预算
 
 - API Key 与 MCP Token 仅存环境变量/密钥文件，禁止提交仓库。
 - dsh Web/TUI 绑定 localhost + 反向代理认证。
-- Agent 工具白名单 + 写操作审批 + 全量审计三层兜底。
+- Agent 工具白名单 + 写操作全量审计兜底（写操作默认完全授权）。
 - 日志与审计不落完整 Token；设备日志敏感内容通过配置脱敏（后续阶段）。
 - 审计 `actor` 在当前无用户认证阶段记录为 `anonymous`（REST）或 `agent:<sessionId>`（Agent 会话）；Web 用户认证落地后替换为真实用户标识。
 
 ## 10. 测试策略
 
-- **单元测试**：logstore 写入/轮转/清理/查询/分页/关键字/字节预算截断；参数校验；MCP JSON-RPC 解析、initialize/tools/list/tools/call、工具参数校验与高风险操作拒绝；审批管理器、Agent 引擎工具循环与审批拦截。
-- **集成测试**：真实 Server 进程下 `device.log.chunk` 落盘、指令生命周期落盘、查询 API 与审计 API；MCP 端点鉴权、SSE 响应、工具全链路；Agent 网关全链路（对话→工具→审批→执行→回复→审计）。
-- **异常测试**：非法条目、写失败降级、扫描预算超限、无效查询参数、MCP 未鉴权/未初始化/非法参数、审批超时/拒绝、工具循环上限。
+- **单元测试**：logstore 写入/轮转/清理/查询/分页/关键字/字节预算截断；参数校验；MCP JSON-RPC 解析、initialize/tools/list/tools/call、工具参数校验；Agent 引擎工具循环与写操作直接派发审计。
+- **集成测试**：真实 Server 进程下 `device.log.chunk` 落盘、指令生命周期落盘、查询 API 与审计 API；MCP 端点鉴权、SSE 响应、工具全链路；Agent 网关全链路（对话→工具→执行→回复→审计）。
+- **异常测试**：非法条目、写失败降级、扫描预算超限、无效查询参数、MCP 未鉴权/未初始化/非法参数、dsh 提问超时、工具循环上限。
 - **后续阶段**：dsh headless 引擎联调、浏览器端到端、多会话与 Web 用户认证。
 
 ## 11. 部署与运维
@@ -388,8 +375,8 @@ TTLAB_LOG_MAX_SCAN_BYTES=67108864         单查询扫描字节预算
 | --- | --- | --- |
 | A | logstore 文件日志 + 日志/审计查询 API | 已完成 |
 | B | TTLAB MCP Server + dsh 接入 | MCP Server 已完成，dsh 实际联调待网络可用 |
-| C | Agent 网关（server-native 引擎）+ Web 聊天面板 + 审批流 | 已完成 |
-| D | dsh 引擎（DshEngine）：Web 会话 1:1 映射 dsh 会话、本地 API 驱动、SSE 事件翻译、审批回传 | 已实现，待真实 dsh 环境联调 |
+| C | Agent 网关（server-native 引擎）+ Web 聊天面板 + 写操作审计 | 已完成 |
+| D | dsh 引擎（DshEngine）：Web 会话 1:1 映射 dsh 会话、本地 API 驱动、SSE 事件翻译、提问/审批转发 | 已实现，待真实 dsh 环境联调 |
 | E | 运维自动化（故障诊断、健康报告、事件订阅监控） | 未开始 |
 
 每个阶段交付前必须同步更新本文档、`project-guide.md` 和测试，并满足 `PROJECT_RULES.md` 交付标准。
@@ -399,8 +386,8 @@ TTLAB_LOG_MAX_SCAN_BYTES=67108864         单查询扫描字节预算
 | 风险 | 应对 |
 | --- | --- |
 | dsh 本地 API 接口版本差异 | `DshEngine` 仅调用稳定公开路由（session.create/prompt/events.mux/respond），并用 mock 服务单测锁定协议 |
-| dsh 工具循环对 MCP `APPROVAL_REQUIRED` 的依赖 LLM 调用 ask_user_question | 在 MCP 工具描述中明确高风险操作需先 ask_user_question 获得确认；审批卡片统一处理 question/approval 两类帧 |
+| dsh 工具循环对 LLM 主动调用 ask_user_question 的依赖 | 在 MCP 工具描述中明确写操作直接执行并审计；审批卡片统一处理 question/approval 两类帧 |
 | LLM 非流式响应体验 | 当前单次 delta；后续接入 SSE 流式解析 |
 | 高频设备日志落盘 IO | 缓冲批写 + 独立目录 + 字节预算查询 |
-| LLM 输出不可控 | 工具白名单 + 审批 + 审计兜底 |
+| LLM 输出不可控 | 工具白名单 + 审计兜底 |
 | 文件查询规模增长 | 按天分片 + 扫描预算；后续可迁移 SQLite/PostgreSQL 而不改查询语义 |

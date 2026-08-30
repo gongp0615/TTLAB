@@ -37,8 +37,8 @@ tv-stick-test-box
 - 同一设备串口命令互斥，不同设备可以并行。
 - Client 断线重连、Server 重启后重新同步。
 - 设备日志、事件、指令生命周期和审计记录的文件持久化（logstore）与历史查询 API。
-- TTLAB MCP Server（`/mcp/v1`）：向 Agent（dsh）暴露设备查询、日志检索、指令下发等工具，高风险操作拒绝执行。
-- Agent 网关（`/api/v1/agent/session`）：Web 聊天面板对话、工具调用、高风险操作审批流；引擎可选 `server-native`（直连 DeepSeek 兼容 API）或 `dsh`（委托 DeepSeek Harness 管理上下文与工具调用，Web 会话 1:1 映射 dsh 会话）。
+- TTLAB MCP Server（`/mcp/v1`）：向 Agent（dsh）暴露设备查询、日志检索、指令下发等工具，写操作默认完全授权并全量审计。
+- Agent 网关（`/api/v1/agent/session`）：Web 聊天面板对话、工具调用与写操作审计；引擎可选 `server-native`（直连 DeepSeek 兼容 API）或 `dsh`（委托 DeepSeek Harness 管理上下文与工具调用，Web 会话 1:1 映射 dsh 会话）。
 - "系统设置"页面：Agent/模型配置（启用、模型、API Key、API 地址等）运行时修改并原地写入 `server.env`。
 - Updater 的 Hash、Ed25519 签名、架构、协议版本、自检和回滚检查。
 - 本地调试和 Server/Client 一键启动脚本。
@@ -48,7 +48,7 @@ tv-stick-test-box
 - Server 业务状态仍保存在内存中，重启后不会恢复历史数据。
 - Server 默认使用 HTTP/WS，Client 认证默认关闭。
 - Server 目前没有完整的 Web 用户认证和 RBAC。
-- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板/审批流已可用；`dsh` 引擎（DshEngine）已实现并配有 mock 联调测试，真实 dsh 环境联调待网络可用，见 [agent-integration.md](agent-integration.md)。
+- 设备日志已持久化，Agent MCP 端点与 Web 聊天面板已可用；`dsh` 引擎（DshEngine）已实现并配有 mock 联调测试，真实 dsh 环境联调待网络可用，见 [agent-integration.md](agent-integration.md)。
 - Test Box 的日志口需要根据真实设备确认，自动识别目前只负责控制口探测。
 - 当前配置默认将一个 Client 上发现的同类 Test Box 端点聚合为一个设备；同一 Client 挂载多台相同 Test Box 时，还需要增加按 USB 拓扑或显式绑定的分组配置。
 
@@ -58,7 +58,7 @@ tv-stick-test-box
 apps/server/src/index.ts       Server HTTP、WebSocket、设备状态和指令路由
 apps/server/src/logstore/      结构化文件日志存储与查询（device/event/command/audit/agent）
 apps/server/src/mcp/           TTLAB MCP Server（JSON-RPC 协议、工具定义、参数校验）
-apps/server/src/agent-gateway/ Agent 网关（LLM 客户端、引擎、审批管理器、WebSocket 会话）
+apps/server/src/agent-gateway/ Agent 网关（LLM 客户端、引擎、WebSocket 会话）
 apps/client/src/index.ts       Client 连接、同步、命令处理和更新请求
 apps/client/src/discovery.ts   串口发现、硬件特征匹配和设备聚合
 apps/client/src/device-manager.ts
@@ -582,10 +582,10 @@ npm test
 - HTTPS/WSS 配置。
 - logstore 写入、轮转、清理、查询、分页、字节预算截断和写失败降级。
 - Server 设备日志、指令生命周期和审计落盘与查询 API。
-- MCP JSON-RPC 协议、工具列表、参数校验、高风险操作拒绝。
+- MCP JSON-RPC 协议、工具列表、参数校验。
 - MCP HTTP 端点鉴权、SSE 响应、查询/下发/审计全链路。
-- Agent 审批管理器、引擎工具循环、审批拦截与超时/拒绝处理。
-- Agent 网关全链路（对话→工具→审批→执行→回复→审计）与功能开关。
+- Agent 引擎工具循环与 dsh 提问/审批转发处理。
+- Agent 网关全链路（对话→工具→执行→回复→审计）与功能开关。
 - 设置存储（配置文件读写、掩码、校验、损坏文件回退）与设置 API 运行时生效。
 - Updater 架构、协议版本、签名、Hash、自检和回滚。
 - 固件上传/列表/下载端点与 manifest 校验。
