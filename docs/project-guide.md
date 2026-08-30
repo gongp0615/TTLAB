@@ -422,13 +422,16 @@ Client 对日志分片限制大小，Server 实时转发，并将分片持久化
 ```text
 <TTLAB_LOG_DIR>/
   device/YYYY-MM-DD/<clientId>.jsonl   设备日志流
-  event/YYYY-MM-DD.jsonl               设备/Client 事件
+  event/YYYY-MM-DD.jsonl               设备/Client 生命周期事件
   command/YYYY-MM-DD.jsonl             指令生命周期
   audit/YYYY-MM-DD.jsonl               用户/Agent 操作审计
   agent/YYYY-MM-DD/<sessionId>.jsonl   Agent 会话
+  error/YYYY-MM-DD.jsonl               错误日志
 ```
 
 按天轮转、追加写入、批量缓冲定时落盘（`TTLAB_LOG_FLUSH_MS`），保留期由 `TTLAB_LOG_RETENTION_DAYS` 控制。详见 [agent-integration.md](agent-integration.md) 第 6 节。
+
+系统消息（Client 登录/离线、设备发现/离线、错误日志、Server 启动/停止）会实时写入 `event`/`error` 类型日志，并通过 `/api/v1/events` 的 `system.log` 信封推送到 Web 控制台，展示在"设备运行总览"下方的"系统日志"面板。详见 [protocol.md](protocol.md) 第 3 节。
 
 ## 10. Server API
 
@@ -457,6 +460,7 @@ GET  /agent/v1/releases/:version/:artifact
 ```bash
 curl 'http://127.0.0.1/api/v1/logs/query?type=device&clientId=<client-id>&keyword=error'
 curl 'http://127.0.0.1/api/v1/logs/query?type=command&commandId=<command-id>'
+curl 'http://127.0.0.1/api/v1/logs/query?type=event&type=error&limit=200'
 curl 'http://127.0.0.1/api/v1/audit?keyword=command.dispatch'
 ```
 

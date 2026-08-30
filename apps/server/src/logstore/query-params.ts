@@ -20,7 +20,7 @@ function parseTimestamp(value: string | null, label: string): string | undefined
 
 export function parseLogQuery(search: URLSearchParams): LogQueryOptions {
   const rawTypes = search.getAll('type');
-  if (rawTypes.some((value) => !isLogType(value))) throw new QueryParamError('type must be one of device, event, command, audit, agent');
+  if (rawTypes.some((value) => !isLogType(value))) throw new QueryParamError('type must be one of device, event, command, audit, agent, error');
   const types: LogType[] = rawTypes.length > 0 ? (rawTypes as LogType[]) : ['device'];
   const options: LogQueryOptions = { types };
   for (const field of ['clientId', 'deviceId', 'commandId', 'actor', 'sessionId'] as const) {

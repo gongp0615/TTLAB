@@ -34,6 +34,15 @@
 
 真实串口设备不可用时，必须使用可控的 Fake Serial Adapter，不得跳过串口测试。
 
+### 浏览器端到端测试（Playwright）
+
+Web 控制台的 PC/手机两套响应式布局通过 Playwright 真实浏览器测试验证：
+
+- 首次运行需安装浏览器：`npx playwright install chromium`（WSL 缺少系统库时使用 `npx playwright install --with-deps chromium`）。
+- 运行 `npm run test:e2e`。测试会自动启动独立 Server 实例（端口 9110、独立日志目录 `e2e-data/`），不占用本地 9000 端口。
+- `playwright.config.ts` 定义 desktop（1280×800）与 mobile（Pixel 7 手机视口）两个项目。
+- `e2e/layout.spec.ts` 覆盖：桌面侧边栏常驻、汉堡按钮隐藏、指标卡并排、Agent 面板 380px 停靠；手机侧边栏抽屉开合、遮罩/Escape 关闭、抽屉内导航切换、指标卡单列堆叠、Agent 面板全屏、页面无控制台错误。
+
 ## 3. 首版本运维边界
 
 - Server 为单实例，内存状态丢失属于已知行为。

@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import WebSocket from 'ws';
 import {
+  message,
   parseEnvelope,
   type ClientSnapshot,
   type CommandRequest,
@@ -596,6 +597,63 @@ test('client rejects a firmware.flash command that has no firmware reference', a
       await agent.stop();
     }
   } finally {
+    await stopServer(server);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function registerRawClient(socket: WebSocket, port: number, clientId: string, bootId: string): Promise<void> {
+  const syncPromise = waitForEvent(socket, (value) => value.type === 'sync.request');
+  socket.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId, platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, clientId)));
+  await syncPromise;
+  socket.send(JSON.stringify(message('client.snapshot', { snapshotRevision: 1, clientVersion: 'test', bootId, health: 'healthy', devices: [], managedDevices: [] }, clientId)));
+  await waitUntil(async () => (await getClient(port, clientId))?.status === 'online');
+}
+
+test('client superseded by another live instance backs off and self-heals once the owner leaves', async () => {
+  const port = await freePort();
+  const server = startServer(port, { TTLAB_HEARTBEAT_TIMEOUT_MS: '1000' });
+  const root = mkdtempSync(join(tmpdir(), 'ttlab-client-it-'));
+  const sockets: WebSocket[] = [];
+  try {
+    await waitForOutput(server, (line) => line.includes('server_started'));
+
+    // 另一个实例已占用同一 clientId（bootId 不同）
+    const owner = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(owner);
+    await once(owner, 'open');
+    await registerRawClient(owner, port, 'client-supersede', 'boot-owner');
+
+    // 新实例使用同一 clientId，应被 Server 拒绝并进入退避重连，不能把 owner 挤下线
+    const agent = new ClientAgent({
+      serverUrl: `ws://127.0.0.1:${port}/agent/v1/session`,
+      stateDirectory: join(root, 'state'),
+      clientId: 'client-supersede',
+      heartbeatMs: 100,
+      refreshIntervalMs: 60_000,
+      supersededDelayMs: 150,
+      discoverPorts: () => [controlPort],
+      controlSelector: controlPort.deviceId,
+    });
+    agent.start();
+    try {
+      // 等待 agent 完成第一次被拒后的退避周期，期间 owner 必须保持在线
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const ownerClient = await getClient(port, 'client-supersede');
+      assert.equal(ownerClient?.status, 'online');
+      assert.equal(ownerClient?.snapshot?.bootId, 'boot-owner');
+
+      // owner 断开后，agent 在退避重试后接管
+      owner.close();
+      await waitUntil(async () => (await getClient(port, 'client-supersede'))?.status === 'offline');
+      await waitClientOnline(port, agent.clientId);
+      const client = await getClient(port, agent.clientId);
+      assert.equal(client?.snapshot?.bootId, agent.bootId);
+    } finally {
+      await agent.stop();
+    }
+  } finally {
+    for (const socket of sockets) socket.close();
     await stopServer(server);
     rmSync(root, { recursive: true, force: true });
   }

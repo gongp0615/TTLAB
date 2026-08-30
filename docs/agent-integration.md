@@ -119,6 +119,7 @@ Server 内新增模块 `apps/server/src/logstore/`，负责设备日志、事件
 - `index.html`/`app.js`/`styles.css` 增加可折叠聊天面板与悬浮入口。
 - 支持对话、工具调用状态卡片、提问/审批确认按钮、会话状态与断线重连。
 - 完整处理加载中、空数据、网络断开、Server 错误、提问超时等状态。
+- 手机布局（≤768px）下聊天面板以全屏覆盖层呈现，悬浮入口移至右下角。
 
 ## 4. 权限与审批模型
 
@@ -149,7 +150,7 @@ GET  /api/v1/agent/sessions/:id/messages（后续）
 
 | 参数 | 说明 | 默认 |
 | --- | --- | --- |
-| `type` | 可重复，`device`/`event`/`command`/`audit`/`agent` | `device` |
+| `type` | 可重复，`device`/`event`/`command`/`audit`/`agent`/`error` | `device` |
 | `clientId` | 精确匹配 | - |
 | `deviceId` | 精确匹配 | - |
 | `commandId` | 精确匹配 | - |
@@ -291,9 +292,12 @@ curl -X POST http://127.0.0.1/mcp/v1 \
 | --- | --- | --- |
 | `device.log.chunk` | device | deviceId, portId, sequence, data, encoding, truncated |
 | Client 连接/离线/心跳超时/上线 | event | action, bootId, version |
+| 设备发现/移除/离线/恢复（快照 diff） | event | action, status, deviceType |
+| Server 启动/停止 | event | action, port, tls |
 | 指令下发与状态变更 | command | operation, parameters, status |
 | 命令下发/升级下发（用户操作） | audit | action, operation/version |
 | Agent 消息与工具调用 | agent | role, tool, content |
+| 协议错误/派发失败/logstore 写失败/内部异常 | error | code, message, clientId, deviceId |
 
 ### 6.4 查询语义
 

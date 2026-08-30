@@ -4,3 +4,6 @@ dist/
 coverage/
 *.log
 data/
+e2e-data/
+test-results/
+playwright-report/

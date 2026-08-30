@@ -85,17 +85,20 @@ interface RuntimeClient {
 
 const clients = new Map<string, RuntimeClient>();
 const commands = new Map<string, { request: CommandRequest; status: string; createdAt: string; progress?: CommandProgress; result?: unknown }>();
+const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+const webEventServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+const agentSocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 const logStore = new LogStore({
   directory: logDirectory,
   flushIntervalMs: logFlushMs,
   flushThresholdBytes: logFlushThresholdBytes,
   retentionDays: logRetentionDays,
   maxScanBytes: logMaxScanBytes,
+  onError: (error, context) => {
+    logError({ code: 'LOGSTORE_WRITE_FAILED', message: error.message, detail: { type: context.type, clientId: context.clientId } });
+  },
 });
 logStore.start();
-const websocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-const webEventServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-const agentSocketServer = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 const staticFiles: Record<string, { file: string; contentType: string }> = {
   '/': { file: 'index.html', contentType: 'text/html; charset=utf-8' },
   '/index.html': { file: 'index.html', contentType: 'text/html; charset=utf-8' },
@@ -172,6 +175,13 @@ function broadcastLog(payload: unknown, clientId: string): void {
   }
 }
 
+function broadcastSystemLog(entry: LogEntry): void {
+  const event = JSON.stringify(message('system.log', entry, entry.clientId));
+  for (const viewer of webEventServer.clients) {
+    if (viewer.readyState === WebSocket.OPEN) viewer.send(event);
+  }
+}
+
 function managedDevices(client: RuntimeClient): Array<Record<string, unknown>> {
   if (client.snapshot?.managedDevices) return client.snapshot.managedDevices.map((device) => ({ ...device, clientId: client.clientId }));
   return client.snapshot?.devices.map((device) => ({ ...device, clientId: client.clientId })) ?? [];
@@ -240,8 +250,72 @@ function logCommandState(clientId: string, payload: { commandId?: string; device
   logStore.write(entry);
 }
 
-function logEvent(clientId: string, action: string, extra?: Record<string, unknown>): void {
-  logStore.write({ ts: new Date().toISOString(), type: 'event', clientId, data: { action, ...(extra ?? {}) } });
+function logEvent(clientId: string | undefined, action: string, extra?: Record<string, unknown>, deviceId?: string): void {
+  const entry: LogEntry = {
+    ts: new Date().toISOString(),
+    type: 'event',
+    ...(clientId !== undefined ? { clientId } : {}),
+    ...(deviceId !== undefined ? { deviceId } : {}),
+    data: { action, ...(extra ?? {}) },
+  };
+  logStore.write(entry);
+  broadcastSystemLog(entry);
+}
+
+function logError(options: { message: string; code?: string; clientId?: string; deviceId?: string; detail?: Record<string, unknown> }): void {
+  const entry: LogEntry = {
+    ts: new Date().toISOString(),
+    type: 'error',
+    ...(options.clientId !== undefined ? { clientId: options.clientId } : {}),
+    ...(options.deviceId !== undefined ? { deviceId: options.deviceId } : {}),
+    data: { ...(options.code !== undefined ? { code: options.code } : {}), message: options.message, ...(options.detail ?? {}) },
+  };
+  logStore.write(entry);
+  broadcastSystemLog(entry);
+}
+
+// 设备可用性归一：serial 与 managed 设备的 status 枚举不同，统一把 offline/error/removed 视为不可用。
+const unavailableStatuses = new Set(['offline', 'error', 'removed']);
+
+function isUnavailable(status: string | undefined): boolean {
+  return status !== undefined && unavailableStatuses.has(status);
+}
+
+function deviceMapOf(snapshot: ClientSnapshot | undefined): Map<string, { deviceId: string; status: string | undefined; deviceType: string | undefined }> {
+  const map = new Map<string, { deviceId: string; status: string | undefined; deviceType: string | undefined }>();
+  for (const device of snapshot?.devices ?? []) map.set(device.deviceId, { deviceId: device.deviceId, status: device.status, deviceType: device.deviceType });
+  for (const device of snapshot?.managedDevices ?? []) map.set(device.deviceId, { deviceId: device.deviceId, status: device.status, deviceType: device.deviceType });
+  return map;
+}
+
+// 对比前后快照，产出设备发现/移除/离线/恢复事件。
+function diffAndLogDeviceEvents(clientId: string, previous: ClientSnapshot | undefined, next: ClientSnapshot): void {
+  const previousDevices = deviceMapOf(previous);
+  const nextDevices = deviceMapOf(next);
+  for (const [deviceId, device] of nextDevices) {
+    const prior = previousDevices.get(deviceId);
+    if (prior === undefined) {
+      logEvent(clientId, 'device.discovered', { status: device.status ?? '', ...(device.deviceType !== undefined ? { deviceType: device.deviceType } : {}) }, deviceId);
+    } else if (isUnavailable(prior.status) && !isUnavailable(device.status)) {
+      logEvent(clientId, 'device.online', { status: device.status ?? '' }, deviceId);
+    } else if (!isUnavailable(prior.status) && isUnavailable(device.status)) {
+      logEvent(clientId, 'device.offline', { status: device.status ?? '' }, deviceId);
+    }
+  }
+  for (const [deviceId, device] of previousDevices) {
+    if (!nextDevices.has(deviceId)) logEvent(clientId, 'device.removed', { status: device.status ?? '' }, deviceId);
+  }
+}
+
+// Client 断开或心跳超时时，将其快照中仍可用的设备标记为离线。
+function logDevicesOffline(clientId: string, snapshot: ClientSnapshot | undefined): void {
+  if (!snapshot) return;
+  const emitted = new Set<string>();
+  for (const device of [...snapshot.devices, ...(snapshot.managedDevices ?? [])]) {
+    if (emitted.has(device.deviceId) || isUnavailable(device.status)) continue;
+    emitted.add(device.deviceId);
+    logEvent(clientId, 'device.offline', { status: device.status }, device.deviceId);
+  }
 }
 
 function writeAudit(options: { actor: string; clientId?: string; deviceId?: string; commandId?: string; action: string; detail: Record<string, unknown> }): void {
@@ -258,6 +332,20 @@ function writeAudit(options: { actor: string; clientId?: string; deviceId?: stri
 
 type DispatchResult = { ok: true; commandId: string } | { ok: false; error: { code: string; message: string; retryable: boolean } };
 
+// 指令派发失败：仅对系统级失败（目标离线、固件缺失）记录错误日志，常规参数校验错误不记为系统错误。
+function dispatchFailure(input: { code: string; message: string; retryable: boolean; clientId?: string; deviceId?: string; operation?: string }): DispatchResult {
+  if (input.code === 'CLIENT_OFFLINE' || input.code === 'DEVICE_OFFLINE' || input.code === 'RELEASE_NOT_FOUND') {
+    logError({
+      code: input.code,
+      message: input.message,
+      ...(input.clientId !== undefined ? { clientId: input.clientId } : {}),
+      ...(input.deviceId !== undefined ? { deviceId: input.deviceId } : {}),
+      detail: { operation: input.operation },
+    });
+  }
+  return { ok: false, error: { code: input.code, message: input.message, retryable: input.retryable } };
+}
+
 function resolveClientForDevice(deviceId: string): string | undefined {
   for (const client of clients.values()) {
     if (isDeviceInSnapshot(client, deviceId)) return client.clientId;
@@ -271,10 +359,10 @@ function isDeviceInSnapshot(client: RuntimeClient, deviceId: string): boolean {
 
 function dispatchCommand(input: { clientId?: string; deviceId: string; operation: string; parameters: Record<string, string>; actor: string }): DispatchResult {
   const clientId = input.clientId ?? resolveClientForDevice(input.deviceId);
-  if (!clientId) return { ok: false, error: { code: 'DEVICE_OFFLINE', message: 'device is not associated with any client', retryable: true } };
+  if (!clientId) return dispatchFailure({ code: 'DEVICE_OFFLINE', message: 'device is not associated with any client', retryable: true, deviceId: input.deviceId, operation: input.operation });
   const client = clients.get(clientId);
   if (!client || client.status !== 'online' || !client.socket || client.socket.readyState !== WebSocket.OPEN) {
-    return { ok: false, error: { code: 'CLIENT_OFFLINE', message: 'client is not online', retryable: true } };
+    return dispatchFailure({ code: 'CLIENT_OFFLINE', message: 'client is not online', retryable: true, clientId, deviceId: input.deviceId, operation: input.operation });
   }
   const managedDevice = client.snapshot?.managedDevices?.find((device) => device.deviceId === input.deviceId);
   if (managedDevice?.operations && managedDevice.operations.length > 0) {
@@ -293,7 +381,7 @@ function dispatchCommand(input: { clientId?: string; deviceId: string; operation
     return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'command parameters must be short strings', retryable: false } };
   }
   if (!isDeviceInSnapshot(client, input.deviceId)) {
-    return { ok: false, error: { code: 'DEVICE_OFFLINE', message: 'device is not in the client snapshot', retryable: true } };
+    return dispatchFailure({ code: 'DEVICE_OFFLINE', message: 'device is not in the client snapshot', retryable: true, clientId, deviceId: input.deviceId, operation: input.operation });
   }
   const now = Date.now();
   const expiresAt = new Date(now + (input.operation === 'firmware.flash' ? 10 * 60 * 1000 : 30_000)).toISOString();
@@ -313,7 +401,7 @@ function dispatchCommand(input: { clientId?: string; deviceId: string; operation
     }
     const manifest = firmwareStore.read(version);
     if (!manifest) {
-      return { ok: false, error: { code: 'RELEASE_NOT_FOUND', message: 'firmware release not found', retryable: false } };
+      return dispatchFailure({ code: 'RELEASE_NOT_FOUND', message: 'firmware release not found', retryable: false, clientId, deviceId: input.deviceId, operation: input.operation });
     }
     if (manifest.artifact !== artifact) {
       return { ok: false, error: { code: 'INVALID_ARGUMENT', message: 'firmware artifact does not match the release', retryable: false } };
@@ -667,6 +755,7 @@ async function requestHandler(request: IncomingMessage, response: import('node:h
     }
     json(response, 404, { error: { code: 'NOT_FOUND', message: 'resource not found', retryable: false } });
   } catch (error) {
+    logError({ code: 'INVALID_REQUEST', message: error instanceof Error ? error.message : 'invalid request' });
     json(response, 400, { error: { code: 'INVALID_REQUEST', message: error instanceof Error ? error.message : 'invalid request', retryable: false } });
   }
 }
@@ -706,10 +795,27 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
           socket.close(1008, 'client authentication failed');
           return;
         }
-        boundClientId = clientId;
         const previous = clients.get(clientId);
+        // 同一 clientId 已被另一个仍在线的进程实例（bootId 不同）占用时，拒绝新连接，
+        // 避免多个实例反复互相抢占会话导致设备状态抖动。
+        const previousAlive = previous !== undefined && previous.status === 'online' && previous.socket !== undefined && previous.socket.readyState === WebSocket.OPEN;
+        if (previousAlive && previous.hello?.bootId !== undefined && previous.hello.bootId !== hello.bootId) {
+          logEvent(clientId, 'client.duplicate_rejected', { bootId: hello.bootId, existingBootId: previous.hello.bootId });
+          socket.close(4009, 'duplicate client id registered by another instance');
+          return;
+        }
+        boundClientId = clientId;
         previous?.socket?.close(4001, 'replaced by newer connection');
-        const runtime: RuntimeClient = { clientId, status: 'syncing', socket, hello, connectedAt: new Date().toISOString(), lastHeartbeatAt: new Date().toISOString() };
+        // 同一 bootId 重连时携带上一连接快照，避免重连被误判为整批设备重新发现
+        const runtime: RuntimeClient = {
+          clientId,
+          status: 'syncing',
+          socket,
+          hello,
+          connectedAt: new Date().toISOString(),
+          lastHeartbeatAt: new Date().toISOString(),
+          ...(previous?.snapshot?.bootId === hello.bootId && previous.snapshot !== undefined ? { snapshot: previous.snapshot } : {}),
+        };
         clients.set(clientId, runtime);
         logEvent(clientId, 'client.connected', { bootId: hello.bootId, version: hello.clientVersion, ...(hello.hostname !== undefined ? { hostname: hello.hostname } : {}) });
         socket.send(JSON.stringify(message('sync.request', { reason: 'connection_established' }, clientId, envelope.id)));
@@ -722,6 +828,7 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
         const nextSnapshot = parseClientSnapshot(envelope.payload);
         if (runtime.snapshot && runtime.snapshot.bootId === nextSnapshot.bootId && nextSnapshot.snapshotRevision <= runtime.snapshot.snapshotRevision) return;
         const wasOnline = runtime.status === 'online';
+        const previousSnapshot = runtime.snapshot;
         runtime.snapshot = nextSnapshot;
         runtime.status = 'online';
         runtime.lastHeartbeatAt = new Date().toISOString();
@@ -733,6 +840,7 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
             ...(nextSnapshot.managedDevices !== undefined ? { managedDevices: nextSnapshot.managedDevices.length } : {}),
           });
         }
+        diffAndLogDeviceEvents(boundClientId, previousSnapshot, nextSnapshot);
         broadcastState(runtime);
       } else if (envelope.type === 'client.heartbeat') {
         runtime.lastHeartbeatAt = new Date().toISOString();
@@ -761,6 +869,7 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
         logDeviceChunk(boundClientId, chunk);
       }
     } catch (error) {
+      logError({ code: 'PROTOCOL_ERROR', message: error instanceof Error ? error.message : 'invalid message', ...(boundClientId !== undefined ? { clientId: boundClientId } : {}) });
       socket.send(JSON.stringify(message('command.failed', { commandId: '', error: { code: 'PROTOCOL_ERROR', message: error instanceof Error ? error.message : 'invalid message', retryable: false } })));
     }
   });
@@ -768,9 +877,11 @@ websocketServer.on('connection', (socket, request: IncomingMessage) => {
     if (!boundClientId) return;
     const runtime = clients.get(boundClientId);
     if (runtime?.socket === socket) {
+      const alreadyOffline = runtime.status === 'offline';
       runtime.socket = undefined;
       runtime.status = 'offline';
       logEvent(boundClientId, 'client.disconnected');
+      if (!alreadyOffline) logDevicesOffline(boundClientId, runtime.snapshot);
       broadcastState(runtime);
     }
   });
@@ -789,14 +900,19 @@ setInterval(() => {
     if (runtime.lastHeartbeatAt && Date.parse(runtime.lastHeartbeatAt) < deadline) {
       runtime.status = 'offline';
       logEvent(runtime.clientId, 'client.heartbeat_timeout');
+      logDevicesOffline(runtime.clientId, runtime.snapshot);
       runtime.socket?.close(4000, 'heartbeat timeout');
     }
   }
 }, Math.max(1000, Math.floor(heartbeatTimeoutMs / 2))).unref();
 
-httpServer.listen(port, () => console.log(JSON.stringify({ event: 'server_started', port, tls: tlsEnabled })));
+httpServer.listen(port, () => {
+  logEvent(undefined, 'server.started', { port, tls: tlsEnabled });
+  console.log(JSON.stringify({ event: 'server_started', port, tls: tlsEnabled }));
+});
 
 function shutdownServer(): void {
+  logEvent(undefined, 'server.stopping', {});
   for (const client of clients.values()) client.socket?.close(1001, 'server shutting down');
   for (const socket of websocketServer.clients) socket.close(1001, 'server shutting down');
   for (const socket of webEventServer.clients) socket.close(1001, 'server shutting down');

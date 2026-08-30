@@ -16,6 +16,15 @@ test('rejects malformed message envelopes', () => {
   assert.throws(() => parseEnvelope(JSON.stringify({ type: 'client.heartbeat' })), /invalid message envelope/);
 });
 
+test('system.log is a Server to Web envelope and is rejected on the client session', () => {
+  const entry = { ts: new Date().toISOString(), type: 'event', clientId: 'client-001', data: { action: 'client.connected' } };
+  const envelope = message('system.log', entry, 'client-001');
+  assert.equal(envelope.type, 'system.log');
+  assert.equal(envelope.payload, entry);
+  // system.log 仅用于 Server→Web 实时事件；Client 会话协议不接收该类型
+  assert.throws(() => parseEnvelope(JSON.stringify(envelope)), /invalid message envelope/);
+});
+
 test('parses client hello with hostname and addresses', () => {
   const hello = parseClientHello({ clientVersion: '1.0.0', protocolVersion: '1.0', bootId: 'boot-test', platform: 'linux', architecture: 'arm64', capabilities: ['serial'], hostname: 'device-01', addresses: ['192.168.1.5', 'fe80::1'] });
   assert.equal(hello.hostname, 'device-01');

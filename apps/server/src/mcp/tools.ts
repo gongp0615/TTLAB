@@ -28,7 +28,7 @@ export interface ToolDefinition {
 const logQuerySchema: Record<string, unknown> = {
   type: 'object',
   properties: {
-    types: { type: 'array', items: { type: 'string', enum: ['device', 'event', 'command', 'audit', 'agent'] }, description: 'log categories to search; defaults to device' },
+    types: { type: 'array', items: { type: 'string', enum: ['device', 'event', 'command', 'audit', 'agent', 'error'] }, description: 'log categories to search; defaults to device' },
     clientId: { type: 'string', description: 'exact client id filter' },
     deviceId: { type: 'string', description: 'exact device id filter' },
     commandId: { type: 'string', description: 'exact command id filter' },

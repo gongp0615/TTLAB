@@ -14,7 +14,9 @@ export type MessageType =
   | 'update.progress'
   | 'update.completed'
   | 'update.failed'
-  | 'device.log.chunk';
+  | 'device.log.chunk'
+  // Server → Web 实时事件（仅 Web 控制台可见，Client 会话协议不支持此类型）
+  | 'system.log';
 
 export const protocolVersion = '1.0' as const;
 

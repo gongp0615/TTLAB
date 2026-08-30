@@ -86,6 +86,26 @@ Client 从已绑定的日志端口持续发送日志分片：
 
 单个分片最大 16 KiB，Server 通过 Web 实时事件通道转发；Client 端口拔出后停止发送并在下一次快照中报告端口状态。
 
+### `system.log`（Server → Web，仅 Web 实时事件通道）
+
+Server 将系统消息以结构化日志条目（LogEntry）推送给所有连接的 Web 控制台，供"系统日志"面板实时展示：
+
+```json
+{
+  "ts": "2026-08-30T10:00:00.000Z",
+  "type": "event",
+  "clientId": "client-001",
+  "deviceId": "tvbox:...",
+  "data": {"action": "device.discovered", "status": "identified"}
+}
+```
+
+- `type` 为 `event` 时，`data.action` 取值包括 `client.connected`、`client.online`、`client.disconnected`、`client.heartbeat_timeout`、`client.update.*`、`device.discovered`、`device.removed`、`device.offline`、`device.online`、`server.started`、`server.stopping`。
+- `type` 为 `error` 时，`data.code` 为错误码、`data.message` 为错误描述（错误日志为 Server 内部日志类别，可经 `GET /api/v1/logs/query?type=error` 查询）。
+- 该信封仅由 Server 发送给 Web 控制台；Client 会话协议不接收此类型，`parseEnvelope` 会将其判为协议错误。
+
+Web 控制台实时接收 `system.log`，历史数据通过 `GET /api/v1/logs/query?type=event&type=error&limit=200` 拉取。
+
 ## 4. 指令消息
 
 Server 向 Client 发送 `command.execute`：

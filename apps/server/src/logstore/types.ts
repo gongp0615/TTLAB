@@ -1,6 +1,6 @@
-export type LogType = 'device' | 'event' | 'command' | 'audit' | 'agent';
+export type LogType = 'device' | 'event' | 'command' | 'audit' | 'agent' | 'error';
 
-export const logTypes: readonly LogType[] = ['device', 'event', 'command', 'audit', 'agent'];
+export const logTypes: readonly LogType[] = ['device', 'event', 'command', 'audit', 'agent', 'error'];
 
 export function isLogType(value: unknown): value is LogType {
   return typeof value === 'string' && (logTypes as readonly string[]).includes(value);

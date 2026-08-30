@@ -53,7 +53,7 @@ Web 控制台是用户使用系统的入口，负责展示 Server 提供的数�
 - 查看指令执行进度、结果和错误信息。
 - 查看设备事件和历史操作记录。
 
-当前仓库中的 `index.html`、`styles.css` 和 `app.js` 主要用于控制台界面原型展示。
+当前仓库中的 `index.html`、`styles.css` 和 `app.js` 为 Web 控制台实现，由 Server 静态托管，提供 PC 与手机两套响应式布局：视口 ≤768px 时切换为手机布局（顶栏汉堡按钮 + 左侧抽屉导航、单列内容、Agent 面板全屏），>768px 使用常驻侧边栏的桌面布局。
 
 ### Client：Linux 设备端代理
 
@@ -158,7 +158,7 @@ Server 支持 Client 身份认证和用户权限控制。当前为简化联调�
 
 首版本采用 TypeScript/Node.js，Server 不持久化业务状态。Server 重启后，Client 会自动重连并重新发送完整快照；因此首版本不提供跨 Server 重启的历史操作查询，也不会自动重放重启前的指令。
 
-设备日志、事件、指令生命周期和审计记录通过结构化文件日志（logstore）持久化，可通过 `GET /api/v1/logs/query` 与 `GET /api/v1/audit` 查询历史数据；配置见 `TTLAB_LOG_DIR`。Agent 接入设计见 [docs/agent-integration.md](docs/agent-integration.md)。
+设备日志、事件、指令生命周期、错误日志和审计记录通过结构化文件日志（logstore）持久化，可通过 `GET /api/v1/logs/query` 与 `GET /api/v1/audit` 查询历史数据；配置见 `TTLAB_LOG_DIR`。Agent 接入设计见 [docs/agent-integration.md](docs/agent-integration.md)。
 
 当前工程目录：
 

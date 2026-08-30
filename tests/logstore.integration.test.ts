@@ -72,9 +72,28 @@ test('Server persists device logs, command lifecycle, and audit to the log store
     const syncPromise = waitForMessage(socket, (value) => value.type === 'sync.request');
     socket.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId: 'boot-e2e', platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, 'client-e2e')));
     await syncPromise;
+
+    // Web viewer 订阅 /api/v1/events，应实时收到 system.log（设备发现等系统消息）。
+    // 注意 system.log 是 Server→Web 专用信封，parseEnvelope 的 knownTypes 不包含它，故用原始 JSON 解析。
+    const viewer = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`);
+    sockets.push(viewer);
+    await once(viewer, 'open');
+    let discoveredEnvelope: { type?: string; payload?: { data?: { action?: string }; deviceId?: string } } | undefined;
+    const onViewerMessage = (data: WebSocket.RawData) => {
+      let value: unknown;
+      try { value = JSON.parse(data.toString()); } catch { return; }
+      const envelope = value as { type?: string; payload?: { data?: { action?: string }; deviceId?: string } };
+      if (envelope.type === 'system.log' && envelope.payload?.data?.action === 'device.discovered') discoveredEnvelope = envelope;
+    };
+    viewer.on('message', onViewerMessage);
+
     const serialPort = { deviceId: 'serial:e2e', path: '/dev/ttyE2E', stableIdentity: true, status: 'available' as const, portRole: 'control' as const, observedAt: new Date().toISOString() };
     const snapshot: ClientSnapshot = { snapshotRevision: 1, clientVersion: 'test', bootId: 'boot-e2e', health: 'healthy', devices: [serialPort], managedDevices: [{ deviceId: 'tvbox:e2e', deviceType: 'tv-stick-test-box', displayName: 'TV Stick Test Box', stableIdentity: 'tvbox-e2e', status: 'identified', ports: [serialPort], capabilities: ['serial-control'], observedAt: serialPort.observedAt }] };
     socket.send(JSON.stringify(message('client.snapshot', snapshot, 'client-e2e')));
+
+    await waitUntil(async () => discoveredEnvelope !== undefined);
+    viewer.off('message', onViewerMessage);
+    assert.ok(['serial:e2e', 'tvbox:e2e'].includes(discoveredEnvelope?.payload?.deviceId as string), 'device.discovered must reference a device in the snapshot');
 
     // device log chunk must be persisted
     const capturedAt = new Date().toISOString();
@@ -114,6 +133,13 @@ test('Server persists device logs, command lifecycle, and audit to the log store
     const actions = eventBody.data.map((entry) => entry.data.action as string);
     assert.ok(actions.includes('client.connected'));
     assert.ok(actions.includes('client.online'));
+    assert.ok(actions.includes('device.discovered'));
+
+    // error log type is queryable and returns a well-formed response
+    const errorResponse = await fetch(`http://127.0.0.1:${port}/api/v1/logs/query?type=error&limit=5`);
+    assert.equal(errorResponse.status, 200);
+    const errorBody = await errorResponse.json() as { data: LogEntry[] };
+    assert.ok(errorBody.data.every((entry) => entry.type === 'error'));
 
     // raw files must exist on disk for device logs
     const date = new Date().toISOString().slice(0, 10);

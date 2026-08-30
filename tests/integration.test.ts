@@ -271,3 +271,84 @@ async function isClientOnline(port: number): Promise<boolean> {
   const body = await response.json() as { data?: Array<{ status?: string }> };
   return body.data?.[0]?.status === 'online';
 }
+
+function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('websocket close timeout')), 5_000);
+    socket.once('close', (code, reason) => { clearTimeout(timeout); resolve({ code, reason: reason.toString() }); });
+  });
+}
+
+async function registerClient(socket: WebSocket, port: number, clientId: string, bootId: string): Promise<void> {
+  const syncPromise = waitForMessage(socket, (value) => value.type === 'sync.request');
+  socket.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId, platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, clientId)));
+  await syncPromise;
+  socket.send(JSON.stringify(message('client.snapshot', { snapshotRevision: 1, clientVersion: 'test', bootId, health: 'healthy', devices: [] }, clientId)));
+  await waitUntil(async () => (await (await fetch(`http://127.0.0.1:${port}/api/v1/clients`)).json()).data?.find((candidate: { clientId: string }) => candidate.clientId === clientId)?.status === 'online');
+}
+
+test('Server rejects a duplicate clientId from a different process instance and keeps the existing session', async () => {
+  const port = await freePort();
+  const logDir = mkdtempSync(join(tmpdir(), 'ttlab-it-logs-'));
+  const child = spawn(process.execPath, ['dist/apps/server/src/index.js'], { cwd: process.cwd(), env: { ...process.env, TTLAB_SERVER_PORT: String(port), TTLAB_WEB_ROOT: process.cwd(), TTLAB_LOG_DIR: logDir }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const sockets: WebSocket[] = [];
+  try {
+    await waitForOutput(child, (line) => line.includes('server_started'));
+    const first = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(first);
+    await once(first, 'open');
+    await registerClient(first, port, 'client-dup', 'boot-a');
+
+    // 同 clientId 但 bootId 不同（另一个进程实例）：新连接必须被拒绝，已有连接保持
+    const second = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(second);
+    await once(second, 'open');
+    const secondClose = waitForClose(second);
+    second.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId: 'boot-b', platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, 'client-dup')));
+    const closed = await secondClose;
+    assert.equal(closed.code, 4009);
+    assert.match(closed.reason, /duplicate/);
+
+    const clients = await (await fetch(`http://127.0.0.1:${port}/api/v1/clients`)).json() as { data: Array<{ clientId: string; status: string; snapshot: { bootId: string } }> };
+    const owner = clients.data.find((candidate) => candidate.clientId === 'client-dup');
+    assert.equal(owner?.status, 'online');
+    assert.equal(owner?.snapshot.bootId, 'boot-a');
+  } finally {
+    for (const socket of sockets) socket.close();
+    if (child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit').catch(() => undefined); }
+    rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
+test('Server lets the same instance (same bootId) reconnect and take over its session', async () => {
+  const port = await freePort();
+  const logDir = mkdtempSync(join(tmpdir(), 'ttlab-it-logs-'));
+  const child = spawn(process.execPath, ['dist/apps/server/src/index.js'], { cwd: process.cwd(), env: { ...process.env, TTLAB_SERVER_PORT: String(port), TTLAB_WEB_ROOT: process.cwd(), TTLAB_LOG_DIR: logDir }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const sockets: WebSocket[] = [];
+  try {
+    await waitForOutput(child, (line) => line.includes('server_started'));
+    const first = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(first);
+    await once(first, 'open');
+    await registerClient(first, port, 'client-takeover', 'boot-c');
+
+    // 同 bootId 重连（同一进程）：旧连接被替换，新连接接管
+    const replacement = new WebSocket(`ws://127.0.0.1:${port}/agent/v1/session`);
+    sockets.push(replacement);
+    await once(replacement, 'open');
+    const firstClose = waitForClose(first);
+    const syncPromise = waitForMessage(replacement, (value) => value.type === 'sync.request');
+    replacement.send(JSON.stringify(message('client.hello', { clientVersion: 'test', protocolVersion: '1.0', bootId: 'boot-c', platform: 'linux', architecture: 'amd64', capabilities: ['serial'] }, 'client-takeover')));
+    const closed = await firstClose;
+    assert.equal(closed.code, 4001);
+    await syncPromise;
+    replacement.send(JSON.stringify(message('client.snapshot', { snapshotRevision: 2, clientVersion: 'test', bootId: 'boot-c', health: 'healthy', devices: [] }, 'client-takeover')));
+    await waitUntil(async () => (await (await fetch(`http://127.0.0.1:${port}/api/v1/clients`)).json()).data?.find((candidate: { clientId: string }) => candidate.clientId === 'client-takeover')?.status === 'online');
+    const clients = await (await fetch(`http://127.0.0.1:${port}/api/v1/clients`)).json() as { data: Array<{ clientId: string; status: string; snapshot: { snapshotRevision: number } }> };
+    assert.equal(clients.data.find((candidate) => candidate.clientId === 'client-takeover')?.snapshot.snapshotRevision, 2);
+  } finally {
+    for (const socket of sockets) socket.close();
+    if (child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit').catch(() => undefined); }
+    rmSync(logDir, { recursive: true, force: true });
+  }
+});

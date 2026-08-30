@@ -105,8 +105,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (iconRoot) iconRoot.createIcons();
   };
 
-  const openModal = (selector) => { const modal = document.querySelector(selector); modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); };
-  const closeModal = (selector) => { const modal = document.querySelector(selector); modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); };
+  const syncModalScrollLock = () => { document.body.classList.toggle('modal-open', document.querySelectorAll('.search-modal.open').length > 0); };
+  const openModal = (selector) => { const modal = document.querySelector(selector); modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); syncModalScrollLock(); };
+  const closeModal = (selector) => { const modal = document.querySelector(selector); modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); syncModalScrollLock(); };
   let activeOperation = null;
   let pendingCommand = null;
 
@@ -360,6 +361,90 @@ document.addEventListener('DOMContentLoaded', () => {
     void setDeviceLogEnabled(deviceId, toggle.checked);
   });
 
+  // ---- 系统日志（Client/设备生命周期事件、错误日志、系统级日志） ----
+  const systemLogStatusEl = document.querySelector('#systemLogStatus');
+  const systemLogOutput = document.querySelector('#systemLogOutput');
+  const MAX_SYSTEM_LOG_ENTRIES = 500;
+  const systemLogIndex = new Map();
+  const systemLogBadgeLabels = { client: 'Client', device: '设备', system: '系统', error: '错误' };
+  const formatLogTime = (ts) => {
+    const date = new Date(ts);
+    return Number.isFinite(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour12: false }) : '';
+  };
+  const systemLogActionLabel = (entry) => {
+    const action = String(entry.data?.action ?? '');
+    const clientId = entry.clientId ?? '';
+    const deviceId = entry.deviceId ?? '';
+    const client = clientId ? `Client ${clientId} ` : 'Client ';
+    const device = deviceId ? `设备 ${deviceId} ` : '设备';
+    const labels = {
+      'client.connected': `${client}登录`,
+      'client.online': `${client}上线`,
+      'client.disconnected': `${client}离线`,
+      'client.heartbeat_timeout': `${client}心跳超时`,
+      'client.update.dispatched': `${client}更新已下发`,
+      'client.update.progress': `${client}更新中`,
+      'client.update.completed': `${client}更新完成`,
+      'client.update.failed': `${client}更新失败`,
+      'device.discovered': `${device}发现`,
+      'device.removed': `${device}移除`,
+      'device.offline': `${device}离线`,
+      'device.online': `${device}上线`,
+      'server.started': 'Server 启动',
+      'server.stopping': 'Server 停止',
+    };
+    return labels[action] ?? action;
+  };
+  const formatSystemLogEntry = (entry) => {
+    const data = entry.data ?? {};
+    if (entry.type === 'error') {
+      const code = typeof data.code === 'string' ? data.code : '';
+      const message = typeof data.message === 'string' ? data.message : '';
+      const parts = [code ? `[${code}]` : '', message, entry.clientId ?? '', entry.deviceId ?? ''];
+      return { badge: 'error', text: parts.filter(Boolean).join(' · ') };
+    }
+    const action = String(data.action ?? '');
+    let badge = 'system';
+    if (action.startsWith('device.')) badge = 'device';
+    else if (action.startsWith('client.')) badge = 'client';
+    return { badge, text: systemLogActionLabel(entry) };
+  };
+  const systemLogKey = (entry) => `${entry.ts}|${entry.type}|${entry.clientId ?? ''}|${entry.deviceId ?? ''}|${JSON.stringify(entry.data ?? {})}`;
+  const renderSystemLog = () => {
+    const entries = [...systemLogIndex.values()].sort((a, b) => String(a.ts).localeCompare(String(b.ts))).slice(-MAX_SYSTEM_LOG_ENTRIES);
+    systemLogOutput.textContent = '';
+    for (const entry of entries) {
+      const { badge, text } = formatSystemLogEntry(entry);
+      const line = document.createElement('div');
+      line.className = 'system-log-line';
+      line.innerHTML = `<span class="system-log-time">${escapeHtml(formatLogTime(entry.ts))}</span><span class="system-log-badge badge-${badge}">${systemLogBadgeLabels[badge]}</span><span class="system-log-text">${escapeHtml(text)}</span>`;
+      systemLogOutput.appendChild(line);
+    }
+    systemLogOutput.scrollTop = systemLogOutput.scrollHeight;
+  };
+  const addSystemLog = (entry) => {
+    systemLogIndex.set(systemLogKey(entry), entry);
+    renderSystemLog();
+  };
+  const setSystemLogStatus = (text, ok) => {
+    systemLogStatusEl.textContent = text;
+    systemLogStatusEl.classList.toggle('ok', Boolean(ok));
+  };
+  const loadSystemLogHistory = async () => {
+    try {
+      const response = await fetch('/api/v1/logs/query?type=event&type=error&limit=200');
+      if (!response.ok) throw new Error('Server 返回错误');
+      const body = await response.json();
+      for (const entry of body.data ?? []) systemLogIndex.set(systemLogKey(entry), entry);
+      systemLogOutput.dataset.empty = '暂无系统日志';
+      renderSystemLog();
+    } catch (error) {
+      systemLogOutput.dataset.empty = '无法加载系统日志';
+      renderSystemLog();
+      setSystemLogStatus('无法加载系统日志', false);
+    }
+  };
+
   let loadRuntimeInFlight = false;
   let loadRuntimeQueued = false;
   const loadRuntime = async () => {
@@ -399,6 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const showFirmwarePage = () => { dashboardWrap.hidden = true; settingsPage.hidden = true; firmwarePage.hidden = false; void loadFirmwareReleases(); void loadDeviceTypes(); };
 
   document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => {
+    closeDrawer();
     document.querySelectorAll('.nav-item').forEach((nav) => nav.classList.remove('active'));
     item.classList.add('active');
     const page = item.dataset.page;
@@ -416,8 +502,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const modal = document.querySelector('#searchModal');
   const input = document.querySelector('#searchInput');
-  const openSearch = () => { modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); setTimeout(() => input.focus(), 20); };
-  const closeSearch = () => { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); input.value = ''; };
+  const openSearch = () => { modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); syncModalScrollLock(); setTimeout(() => input.focus(), 20); };
+  const closeSearch = () => { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); syncModalScrollLock(); input.value = ''; };
   document.querySelector('#searchTrigger').addEventListener('click', openSearch);
   modal.querySelector('.search-backdrop').addEventListener('click', closeSearch);
   modal.querySelectorAll('[data-search]').forEach((button) => button.addEventListener('click', () => { closeSearch(); showToast(`正在搜索：${button.dataset.search}`); }));
@@ -427,8 +513,31 @@ document.addEventListener('DOMContentLoaded', () => {
       if (modal.classList.contains('open')) closeSearch();
       if (document.querySelector('#commandModal').classList.contains('open')) closeModal('#commandModal');
       if (document.querySelector('#confirmModal').classList.contains('open')) { closeModal('#confirmModal'); pendingCommand = null; }
+      closeDrawer();
     }
   });
+
+  const sidebar = document.querySelector('.sidebar');
+  const drawerBackdrop = document.querySelector('#drawerBackdrop');
+  const sidebarToggle = document.querySelector('#sidebarToggle');
+  const openDrawer = () => {
+    sidebar.classList.add('open');
+    drawerBackdrop.classList.add('open');
+    drawerBackdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('drawer-open');
+  };
+  const closeDrawer = () => {
+    sidebar.classList.remove('open');
+    drawerBackdrop.classList.remove('open');
+    drawerBackdrop.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('drawer-open');
+  };
+  sidebarToggle.addEventListener('click', () => (sidebar.classList.contains('open') ? closeDrawer() : openDrawer()));
+  drawerBackdrop.addEventListener('click', closeDrawer);
+  const mobileViewport = window.matchMedia('(max-width: 768px)');
+  const handleViewportChange = (event) => { if (!event.matches) closeDrawer(); };
+  if (mobileViewport.addEventListener) mobileViewport.addEventListener('change', handleViewportChange);
+  else if (mobileViewport.addListener) mobileViewport.addListener(handleViewportChange);
 
   const agentPanel = document.querySelector('#agentPanel');
   const agentLauncher = document.querySelector('#agentLauncher');
@@ -788,6 +897,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const socket = new WebSocket(eventsUrl);
     eventsSocket = socket;
     socket.addEventListener('open', () => {
+      systemLogIndex.clear();
+      systemLogOutput.dataset.empty = '正在加载系统日志...';
+      renderSystemLog();
+      setSystemLogStatus('实时连接已建立', true);
+      void loadSystemLogHistory();
       for (const [deviceId, state] of logState) {
         if (state.subscribed) socket.send(JSON.stringify({ type: 'log.subscribe', deviceId }));
       }
@@ -797,6 +911,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const envelope = JSON.parse(event.data);
         if (envelope.type === 'device.log.chunk') {
           appendDeviceLog(envelope.payload?.deviceId, envelope.payload?.data ?? '');
+        } else if (envelope.type === 'system.log') {
+          addSystemLog(envelope.payload);
         } else {
           void loadRuntime();
         }
@@ -806,7 +922,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     socket.addEventListener('close', () => {
       if (eventsSocket === socket) eventsSocket = null;
+      setSystemLogStatus('实时连接已断开', false);
       showToast('实时连接已断开，正在重新连接');
+      void loadSystemLogHistory();
       if (eventsReconnectTimer) clearTimeout(eventsReconnectTimer);
       eventsReconnectTimer = setTimeout(connectEvents, 3000);
     });
@@ -814,5 +932,5 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   connectEvents();
   void loadRuntime();
-  setInterval(() => { if (!eventsSocket || eventsSocket.readyState !== WebSocket.OPEN) void loadRuntime(); }, 10000);
+  setInterval(() => { if (!eventsSocket || eventsSocket.readyState !== WebSocket.OPEN) { void loadRuntime(); void loadSystemLogHistory(); } }, 10000);
 });

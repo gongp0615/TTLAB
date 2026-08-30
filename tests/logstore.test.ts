@@ -61,6 +61,33 @@ test('writes entries to type-specific JSON Lines files and flushes on demand', (
   }
 });
 
+test('error entries are persisted to error type files and queryable', async () => {
+  const { store, root } = createStore();
+  try {
+    store.write({ ts: tsAt(-1000), type: 'error', clientId: 'client-001', deviceId: 'tvbox:one', data: { code: 'DEVICE_OFFLINE', message: 'client is not online' } });
+    store.write({ ts: tsAt(-500), type: 'event', clientId: 'client-001', data: { action: 'device.discovered' } });
+    store.flush();
+
+    const date = todayKey();
+    assert.equal(existsSync(join(root, 'logs', 'error', `${date}.jsonl`)), true);
+
+    const errors = await store.query({ types: ['error'] });
+    assert.equal(errors.data.length, 1);
+    assert.equal(errors.data[0]?.data.code, 'DEVICE_OFFLINE');
+    assert.equal(errors.data[0]?.deviceId, 'tvbox:one');
+
+    const byClient = await store.query({ types: ['error'], clientId: 'client-001' });
+    assert.equal(byClient.data.length, 1);
+
+    // error 与 event 可通过一次查询合并检索
+    const combined = await store.query({ types: ['error', 'event'], clientId: 'client-001' });
+    assert.equal(combined.data.length, 2);
+  } finally {
+    void store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('flushes automatically when the buffer threshold is reached', () => {
   const { store, root } = createStore({ flushThresholdBytes: 1024 });
   try {

@@ -58,6 +58,7 @@
         </aside>
         <div class="main-content-body">
         <header class="topbar">
+          <button class="icon-button topbar-toggle" id="sidebarToggle" aria-label="打开菜单"><i data-lucide="menu"></i></button>
           <div class="breadcrumbs"><span>工作区</span><i data-lucide="chevron-right"></i><strong id="breadcrumbPage">概览</strong></div>
           <div class="topbar-actions">
             <button class="icon-button search-button" id="searchTrigger" aria-label="搜索"><i data-lucide="search"></i><span>搜索</span><kbd>⌘ K</kbd></button>
@@ -109,6 +110,14 @@
               <div class="panel-header"><h2>设备状态</h2><button class="plain-button" id="incidentFilterButton">全部设备 <i data-lucide="chevron-down"></i></button></div>
               <div class="incident-list" id="incidentList"><div class="empty-state">正在加载设备状态...</div></div>
             </article>
+          </section>
+
+          <section class="panel system-log-panel">
+            <div class="panel-header">
+              <h2>系统日志</h2>
+              <div class="panel-header-actions"><span class="system-log-status" id="systemLogStatus">正在连接实时通道...</span></div>
+            </div>
+            <div class="system-log-output" id="systemLogOutput" aria-live="polite" data-empty="正在加载系统日志..."></div>
           </section>
 
           <footer class="page-footer"><span>TTLAB 智能运维工作台 <span class="footer-separator">·</span> v1.8.4</span><span class="footer-links"><a href="#docs">使用文档</a><a href="#status">系统状态 <span class="tiny-green-dot"></span></a></span></footer>
@@ -229,6 +238,7 @@
         </div>
       </main>
     </div>
+    <div class="drawer-backdrop" id="drawerBackdrop" aria-hidden="true"></div>
     <button class="agent-launcher" id="agentLauncher" aria-label="打开运维智能体"><i data-lucide="bot"></i></button>
     <div class="toast" id="toast" role="status"><i data-lucide="check-circle-2"></i><span></span></div>
     <div class="search-modal" id="commandModal" aria-hidden="true">

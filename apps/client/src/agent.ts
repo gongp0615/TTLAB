@@ -38,6 +38,8 @@ export interface ClientAgentOptions {
   heartbeatMs?: number | undefined;
   refreshIntervalMs?: number | undefined;
   serialTimeoutMs?: number | undefined;
+  /** 身份被其他实例占用（4001/4009）后的重试间隔，默认 5000ms，最大 60s */
+  supersededDelayMs?: number | undefined;
   controlSelector?: string | undefined;
   logSelector?: string | undefined;
   probeEnabled?: boolean | undefined;
@@ -63,6 +65,7 @@ export class ClientAgent {
   private snapshotRevision = 0;
   private socket: WebSocket | undefined;
   private reconnectDelay = 1000;
+  private supersededDelay = 5_000;
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private refreshTimer: NodeJS.Timeout | undefined;
@@ -74,6 +77,7 @@ export class ClientAgent {
     this.clientVersionValue = options.clientVersion ?? '0.1.0';
     this.heartbeatIntervalMs = options.heartbeatMs ?? 10_000;
     this.refreshIntervalMs = options.refreshIntervalMs ?? 5_000;
+    this.supersededDelay = options.supersededDelayMs ?? 5_000;
     this.adapter = options.adapter ?? new TvStickTestBoxAdapter(options.serialTimeoutMs ?? 3000);
     this.flasher = options.flasher ?? new UsbDfuFlasher({ stateDirectory: options.stateDirectory, ...(options.token ? { token: options.token } : {}) });
     this.deviceManager = new DeviceManager({
@@ -190,18 +194,37 @@ export class ClientAgent {
     socket.on('message', (data) => {
       try {
         const envelope = parseEnvelope(data.toString());
-        if (envelope.type === 'sync.request') void this.refreshDevices(false).then(() => this.send('client.snapshot', this.snapshot(), envelope.id));
+        if (envelope.type === 'sync.request') {
+          // 只有 Server 接受 hello 并完成注册才会下发 sync.request，此时重置被替代退避
+          this.supersededDelay = this.options.supersededDelayMs ?? 5_000;
+          void this.refreshDevices(false).then(() => this.send('client.snapshot', this.snapshot(), envelope.id));
+        }
         if (envelope.type === 'client.update') this.startUpdate(envelope.payload as UpdateRequest, envelope.id);
         if (envelope.type === 'command.execute') this.receiveCommandExecute(parseCommandRequest(envelope.payload), envelope.id);
       } catch (error) {
         console.error(JSON.stringify({ event: 'protocol_error', message: error instanceof Error ? error.message : 'invalid message' }));
       }
     });
-    socket.on('close', () => {
+    socket.on('close', (code, reason) => {
+      if (this.socket !== socket) return;
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
-      if (this.socket === socket) this.socket = undefined;
-      if (!this.stopped && !this.reconnectTimer) {
+      this.socket = undefined;
+      if (this.stopped) return;
+      if (code === 4001 || code === 4009) {
+        // 身份已被其他实例接管（4001）或 Server 判定为重复实例（4009）：
+        // 用长退避缓慢重试，避免与在位实例抢占会话，同时在其失效后能够自愈接管。
+        console.error(JSON.stringify({ event: 'client_superseded', code, reason: reason?.toString() ?? '', clientId: this.clientIdValue, retryMs: this.supersededDelay }));
+        this.reconnectDelay = 1000;
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          this.supersededDelay = Math.min(this.supersededDelay * 2, 60_000);
+          this.connect();
+        }, this.supersededDelay);
+        return;
+      }
+      if (!this.reconnectTimer) {
         this.reconnectTimer = setTimeout(() => { this.reconnectTimer = undefined; this.connect(); }, this.reconnectDelay + Math.floor(Math.random() * 500));
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30_000);
       }
