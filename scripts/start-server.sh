@@ -29,7 +29,8 @@ cd "$PROJECT_ROOT"
 
 # This installs nvm/Node for the current user when the machine is not initialized yet.
 # As root it installs Node.js system-wide instead, so the nvm steps are skipped.
-bash "$SCRIPT_DIR/init-environment.sh"
+# The Server does not access serial devices, so the dialout check is skipped.
+TTLAB_SKIP_DIALOUT=1 bash "$SCRIPT_DIR/init-environment.sh"
 if [[ "$IS_ROOT" -eq 0 ]]; then
   export NVM_DIR
   # shellcheck disable=SC1090

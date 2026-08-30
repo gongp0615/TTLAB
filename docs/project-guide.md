@@ -178,7 +178,7 @@ source ~/.bashrc
 
 普通用户不要使用 `sudo` 运行该脚本；root 用户直接运行即可。
 
-脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组。
+脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组；`start-server.sh` 已设置 `TTLAB_SKIP_DIALOUT=1` 跳过此检查。
 
 ### 5.2 调试启动
 

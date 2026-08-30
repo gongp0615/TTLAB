@@ -184,3 +184,14 @@ test('proceeds when the current user is a member of the dialout group', async ()
     harness.cleanup();
   }
 });
+
+test('skips the dialout check when TTLAB_SKIP_DIALOUT=1 (Server-only run)', async () => {
+  const harness = makeHarness({ nodeMajor: '22', nodeVersion: 'v22.14.0' });
+  try {
+    const result = await harness.run({ TTLAB_TEST_GROUPS: 'gongp adm', TTLAB_SKIP_DIALOUT: '1' });
+    assert.equal(result.exitCode, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /skipping dialout group check/);
+  } finally {
+    harness.cleanup();
+  }
+});

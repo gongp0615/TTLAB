@@ -23,7 +23,7 @@ source ~/.bashrc
 
 普通用户不要使用 `sudo` 运行该初始化脚本（nvm 是 per-user 工具）；root 用户直接运行即可。普通用户如需强制走系统级安装，可设置 `TTLAB_SYSTEM_NODE=1`（配合 `sudo` 使用）。
 
-脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组，纯 Server 部署可忽略。
+脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组，纯 Server 部署可忽略（`start-server.sh` 已设置 `TTLAB_SKIP_DIALOUT=1` 自动跳过）。
 
 也可以直接使用一键 Server 启动脚本：
 

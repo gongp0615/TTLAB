@@ -22,7 +22,12 @@ fi
 # a member of dialout for the Client to open /dev/ttyUSB* and /dev/ttyACM*.
 # Group membership only takes effect after a new login, so a missing dialout
 # here cannot be fixed by this script alone (it would need sudo + re-login).
+# Server-only runs (start-server.sh) skip this check by setting TTLAB_SKIP_DIALOUT=1.
 ensure_dialout_membership() {
+  if [[ "${TTLAB_SKIP_DIALOUT:-0}" == "1" ]]; then
+    log 'skipping dialout group check (TTLAB_SKIP_DIALOUT=1)'
+    return 0
+  fi
   getent group dialout >/dev/null 2>&1 || fail 'the dialout group is required for serial access; create it with: sudo groupadd dialout'
 
   if [[ "$(id -u)" -eq 0 ]]; then
