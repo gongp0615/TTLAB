@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { DeviceLogChunk, ManagedDevice, SerialDevice } from '../../../packages/protocol/src/index.js';
-import { discoverSerialPorts, buildManagedDevices, isTvStickTestBoxPort, isTvStickTestBoxProbePort, tvBoxProfile, type DeviceTypeProfile, type SerialPortInfo } from './discovery.js';
+import { discoverSerialPorts, buildManagedDevices, isTvStickTestBoxPort, isTvStickTestBoxProbePort, selectorMatches, tvBoxProfile, type DeviceTypeProfile, type SerialPortInfo } from './discovery.js';
 import { probeTvStickPort, SerialLogCollector } from './serial.js';
 
 interface DeviceBinding {
@@ -49,7 +49,15 @@ export class DeviceManager {
   }
 
   async refresh(): Promise<boolean> {
-    const ports = (this.options.discoverPorts ?? discoverSerialPorts)();
+    let ports: SerialPortInfo[];
+    try {
+      ports = (this.options.discoverPorts ?? discoverSerialPorts)();
+    } catch (error) {
+      // 设备扫描失败（例如 /dev/serial/by-id 目录在 udev 重载瞬间消失）不能
+      // 让未处理的 rejection 拖垮整个 Client 进程，记日志后保持上次状态。
+      console.error(JSON.stringify({ event: 'device_scan_error', message: error instanceof Error ? error.message : 'unknown error', at: new Date().toISOString() }));
+      return false;
+    }
     const hardwareSignature = ports.map((port) => `${port.deviceId}:${port.path}:${port.hardwareKey ?? ''}`).sort().join('|');
     if (hardwareSignature === this.signature) return false;
     const binding = this.readBinding();
@@ -57,12 +65,16 @@ export class DeviceManager {
     let logSelector = this.options.logSelector ?? binding.logSelector;
     const tvPorts = ports.filter(isTvStickTestBoxPort);
     const profile = this.options.tvBoxProfile ?? tvBoxProfile;
-    if (tvPorts.length > 0 && !controlSelector && this.options.probeEnabled !== false) {
+    // 持久化的 controlSelector 可能因设备重插后身份漂移而失效（例如 udev 厂商
+    // 库缺失导致 by-id 名称变化）。此时必须重新 probe，否则设备会一直停在
+    // ambiguous/matched 而无法恢复 identified。
+    const controlMatched = tvPorts.some((port) => selectorMatches(port, controlSelector));
+    if (tvPorts.length > 0 && !controlMatched && this.options.probeEnabled !== false) {
       for (const port of tvPorts.filter(isTvStickTestBoxProbePort)) {
         try {
           const probe = this.options.probePort ?? ((path: string, timeoutMs: number) => probeTvStickPort(path, timeoutMs, undefined, profile?.probe.command, profile?.probe.responsePrefix));
           if (await probe(port.path, profile?.probe.timeoutMs ?? 3000)) {
-            controlSelector = port.deviceId;
+            controlSelector = port.hardwareKey ?? port.deviceId;
             break;
           }
         } catch {
@@ -74,7 +86,12 @@ export class DeviceManager {
     this.ports = ports;
     this.devices = buildManagedDevices(ports, { controlSelector, logSelector });
     this.signature = hardwareSignature;
-    if (controlSelector || logSelector) this.writeBinding({ controlSelector, logSelector });
+    // 持久化 hardwareKey 而非 deviceId：deviceId 依赖 /dev/serial/by-id 目录名，
+    // 重插后可能变化；hardwareKey（VID:PID:序列号）是稳定硬件标识，selectorMatches
+    // 同时支持两者，因此旧格式的 binding 仍可匹配。
+    const controlPort = ports.find((port) => selectorMatches(port, controlSelector));
+    const logPort = ports.find((port) => selectorMatches(port, logSelector));
+    if (controlSelector || logSelector) this.writeBinding({ controlSelector: controlPort?.hardwareKey ?? controlSelector, logSelector: logPort?.hardwareKey ?? logSelector });
     await this.reconcileLogCollectors();
     if (this.options.debugDevices === true) {
       const statusOf = (devices: ManagedDevice[]) => devices.map((device) => `${device.deviceId}:${device.status}:${device.ports.map((port) => port.portRole ?? '?').join('/')}`).join('; ') || '(none)';

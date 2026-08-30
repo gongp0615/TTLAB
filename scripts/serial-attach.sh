@@ -10,6 +10,12 @@ set -Eeuo pipefail
 # VID:PID matches a configured device type, so unrelated peripherals are never
 # touched.
 #
+# Attach requests use `usbipd attach --wsl --auto-attach --unplugged` when the
+# installed usbipd-win supports it (>= 4.2). This makes WSL pick the device up
+# again automatically after it is unplugged and plugged back in on the Windows
+# side; without it a replug leaves the /dev node missing until someone attaches
+# the device manually again.
+#
 # Subcommands:
 #   status   Read-only diagnostics: configured device types, usbipd state,
 #            current /dev serial nodes, and what still needs attaching.
@@ -72,6 +78,26 @@ find_usbipd() {
     return 0
   fi
   return 1
+}
+
+# usbipd-win >= 4.2 supports --auto-attach, which re-attaches a WSL-bound
+# device automatically after it is unplugged and plugged back in. Without it a
+# replug leaves the device in the Windows-side "Shared" state while the WSL
+# /dev node never comes back, so the TTLAB Client cannot re-discover the device
+# until someone attaches it manually again. Exits 0 when the installed usbipd
+# is at least the requested "<major.minor>" version.
+usbipd_version_at_least() {
+  local wanted_major wanted_minor major minor installed
+  wanted_major="${1%%.*}"
+  wanted_minor="${1#*.}"
+  wanted_minor="${wanted_minor%%.*}"
+  installed="$("$USBIPD_EXE" --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)"
+  [[ -n "$installed" ]] || return 1
+  major="${installed%%.*}"
+  minor="${installed#*.}"
+  minor="${minor%%.*}"
+  (( major > wanted_major )) && return 0
+  (( major == wanted_major && minor >= wanted_minor ))
 }
 
 # Loads "vendorId:productId" pairs from device-types/*/device.json into a newline list.
@@ -207,11 +233,14 @@ run_attach_via_elevation() {
   # -EncodedCommand to avoid shell quoting issues; failure of any attach stops
   # the session with a non-zero exit code.
   local busids=("$@")
-  local usbipd_win script b encoded
+  local usbipd_win script b encoded auto_args=''
+  if usbipd_version_at_least 4.2; then
+    auto_args=' --auto-attach --unplugged'
+  fi
   usbipd_win="$(usbipd_path_for_windows)"
   script=''
   for b in "${busids[@]}"; do
-    script+="& '$usbipd_win' attach --wsl --busid=$b; if (\$LASTEXITCODE -ne 0) { exit 1 }; "
+    script+="& '$usbipd_win' attach --wsl$auto_args --busid=$b; if (\$LASTEXITCODE -ne 0) { exit 1 }; "
   done
   log "requesting Windows elevation to attach: ${busids[*]} (approve the UAC prompt)"
   encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE 2>/dev/null | base64 -w0 2>/dev/null || true)"
@@ -396,6 +425,10 @@ cmd_attach() {
     fi
   done
   if [[ "${#attach_busids[@]}" -gt 0 ]]; then
+    local auto_args=''
+    if usbipd_version_at_least 4.2; then
+      auto_args=' --auto-attach --unplugged'
+    fi
     if [[ "$ELEVATE" == '1' ]] && ! is_windows_elevated; then
       if ! run_attach_via_elevation "${attach_busids[@]}"; then
         warn 'elevated attach did not complete; run the following manually:'
@@ -407,7 +440,7 @@ cmd_attach() {
     else
       for busid in "${attach_busids[@]}"; do
         log "attaching $busid"
-        if ! timeout "$TIMEOUT_SECONDS" "$USBIPD_EXE" attach --wsl --busid="$busid"; then
+        if ! timeout "$TIMEOUT_SECONDS" "$USBIPD_EXE" attach --wsl$auto_args --busid="$busid"; then
           warn "attach failed for busid $busid"
           failed=1
         fi

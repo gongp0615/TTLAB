@@ -63,6 +63,8 @@ sudo -E ./scripts/install-udev-rules.sh remove    # 卸载，恢复 dialout 组�
 
 `attach` 只处理命中 `device-types/*/device.json`（按 `match[].vendorId:productId` 匹配）且处于 `Shared` 状态的 USB 串口设备，非串口外设和未配置类型的串口不会被触碰。未共享的设备默认只提示手动执行 `usbipd bind --busid=<BUSID>`，设置 `TTLAB_WSL_SERIAL_AUTO_BIND=1` 后可自动 bind。
 
+当本机 usbipd-win ≥ 4.2 时，`attach` 使用 `usbipd attach --wsl --auto-attach --unplugged`：设备在 Windows 端被拔出再插回后，WSL 会自动重新挂载设备节点，Client 的串口轮询会自动重新发现设备，无需手动再次 attach。旧版 usbipd-win 不传该参数，拔插后需要重新运行 `./scripts/serial-attach.sh attach`。
+
 默认行为受以下环境变量控制：
 
 | 变量 | 默认 | 说明 |

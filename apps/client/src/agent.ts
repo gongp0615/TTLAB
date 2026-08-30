@@ -145,8 +145,13 @@ export class ClientAgent {
   }
 
   async refreshDevices(sendSnapshot: boolean): Promise<void> {
-    const changed = await this.deviceManager.refresh();
-    if (changed && sendSnapshot) this.send('client.snapshot', this.snapshot());
+    try {
+      const changed = await this.deviceManager.refresh();
+      if (changed && sendSnapshot) this.send('client.snapshot', this.snapshot());
+    } catch (error) {
+      // 设备刷新不得因单个异常导致 unhandled rejection 拖垮 Client（Node 默认会退出进程）。
+      console.error(JSON.stringify({ event: 'device_refresh_error', message: error instanceof Error ? error.message : 'unknown error', at: new Date().toISOString() }));
+    }
   }
 
   receiveCommandExecute(raw: CommandRequest, correlationId: string): void {

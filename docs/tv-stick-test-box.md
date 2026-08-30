@@ -100,4 +100,6 @@ Windows 连接的 USB 设备必须先通过 `usbipd-win` 附加到 WSL，附加�
 TTLAB_WSL_SERIAL_BUSIDS='2-5 2-6' ./scripts/serial-attach.sh attach
 ```
 
+当本机 usbipd-win ≥ 4.2 时，`attach` 会带 `--auto-attach --unplugged` 挂载，设备在 Windows 端拔出再插回后会自动重新挂载到 WSL，Client 会自动重新识别；旧版 usbipd-win 拔插后需要重新执行一次 `./scripts/serial-attach.sh attach`。
+
 如果设备只显示为 `ambiguous`，先查看 Client 上报的稳定端口名称，再在 `client.json` 中用 `controlSelector` 和 `logSelector` 做一次绑定。

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { DeviceOperation, ManagedDevice, SerialDevice } from '../../../packages/protocol/src/index.js';
 
 export interface SerialPortInfo extends SerialDevice {
@@ -49,8 +50,33 @@ function udevProperties(path: string): Record<string, string> {
   }
 }
 
+// 兜底从 sysfs 直接读取 USB 硬件标识。设备刚插上时 `udevadm info` 可能还查不到
+// 数据库记录（udev 尚未完成枚举），但 sysfs 的 idVendor/idProduct/serial 在设备
+// 节点创建后立即可读。这保证重插后 hardwareKey/deviceId 不会因为 udev 数据库
+// 暂时缺失而漂移，从而避免 device-bindings.json 里的 controlSelector 失效。
+function sysfsProperties(path: string): Record<string, string> {
+  const deviceDir = `/sys/class/tty/${basename(path)}/device`;
+  const read = (file: string): string | undefined => {
+    try {
+      const value = readFileSync(`${deviceDir}/${file}`, 'utf8').trim();
+      return value || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const vendorId = read('idVendor');
+  const productId = read('idProduct');
+  const serialNumber = read('serial');
+  if (!vendorId && !productId && !serialNumber) return {};
+  return {
+    ...(vendorId !== undefined ? { ID_VENDOR_ID: vendorId } : {}),
+    ...(productId !== undefined ? { ID_MODEL_ID: productId } : {}),
+    ...(serialNumber !== undefined ? { ID_SERIAL_SHORT: serialNumber } : {}),
+  };
+}
+
 function portFromEntry(entry: string, path: string, stableIdentity: boolean, observedAt: string): SerialPortInfo {
-  const properties = udevProperties(path);
+  const properties = { ...udevProperties(path), ...sysfsProperties(path) };
   const vendorId = properties.ID_VENDOR_ID;
   const productId = properties.ID_MODEL_ID;
   const serialNumber = properties.ID_SERIAL_SHORT ?? properties.ID_SERIAL;
@@ -101,11 +127,16 @@ function matchesProfileRules(port: SerialPortInfo, rules: DeviceTypeMatch[]): bo
     const productMatches = !rule.productId || rule.productId.toLowerCase() === port.productId?.toLowerCase();
     const nameMatches = !rule.namePattern || new RegExp(rule.namePattern, 'i').test(port.deviceId);
     const hasHardwareProperties = Boolean(port.vendorId || port.productId);
-    return nameMatches && (!hasHardwareProperties || (vendorMatches && productMatches));
+    // 存在可靠硬件标识（VID:PID，来自 udev 或 sysfs 兜底）时以 VID:PID 为准。
+    // namePattern 只用于设备缺少硬件标识时按 by-id 名称兜底匹配：重插后若
+    // udev 厂商库缺失，by-id 名称会退化为十六进制形式（如 usb-28e9_018a_...），
+    // 仍按 VID:PID 判定设备类型，避免设备被错误降级为 generic-serial。
+    if (hasHardwareProperties) return vendorMatches && productMatches;
+    return nameMatches;
   });
 }
 
-function selectorMatches(port: SerialPortInfo, selector: string | undefined): boolean {
+export function selectorMatches(port: SerialPortInfo, selector: string | undefined): boolean {
   if (!selector) return false;
   return [port.deviceId, port.path, port.hardwareKey, port.serialNumber].filter(Boolean).some((value) => value === selector);
 }

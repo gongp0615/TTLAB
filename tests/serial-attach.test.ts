@@ -28,6 +28,9 @@ printf '%s\\n' "$*" >> "$TTLAB_FAKE_LOG"
 cmd="\${1:-}"; shift || true
 STATE_FILE="\${TTLAB_FAKE_STATE:-}"
 case "$cmd" in
+  --version)
+    printf '%s\\n' "\${TTLAB_FAKE_VERSION:-5.3.0}"
+    ;;
   list)
     attached=""
     if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ]; then
@@ -127,6 +130,7 @@ function makeHarness(): Harness {
     TTLAB_FAKE_LOG: logPath,
     TTLAB_FAKE_DEV: devDir,
     TTLAB_FAKE_STATE: statePath,
+    TTLAB_FAKE_VERSION: '5.3.0',
   };
   return {
     root,
@@ -168,8 +172,8 @@ test('attach only targets known-type shared devices and succeeds once nodes appe
     const result = await harness.run(['attach']);
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     const calls = harness.calls();
-    assert.match(calls, /attach --wsl --busid=2-5/);
-    assert.match(calls, /attach --wsl --busid=2-6/);
+    assert.match(calls, /attach --wsl --auto-attach --unplugged --busid=2-5/);
+    assert.match(calls, /attach --wsl --auto-attach --unplugged --busid=2-6/);
     assert.doesNotMatch(calls, /busid=2-4/);
     assert.doesNotMatch(calls, /busid=2-7/);
     assert.doesNotMatch(calls, /busid=3-1/);
@@ -185,7 +189,7 @@ test('attach honors an explicit busid whitelist', async () => {
     const result = await harness.run(['attach'], { TTLAB_WSL_SERIAL_BUSIDS: '2-6' });
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     const calls = harness.calls();
-    assert.match(calls, /attach --wsl --busid=2-6/);
+    assert.match(calls, /attach --wsl --auto-attach --unplugged --busid=2-6/);
     assert.doesNotMatch(calls, /busid=2-5/);
     assert.doesNotMatch(calls, /busid=2-7/);
   } finally {
@@ -200,7 +204,20 @@ test('attach binds then attaches a known-type device that is not yet shared when
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     const calls = harness.calls();
     assert.match(calls, /bind --busid=2-7/);
-    assert.match(calls, /attach --wsl --busid=2-7/);
+    assert.match(calls, /attach --wsl --auto-attach --unplugged --busid=2-7/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('attach omits auto-attach flags on usbipd-win older than 4.2', async () => {
+  const harness = makeHarness();
+  try {
+    const result = await harness.run(['attach'], { TTLAB_FAKE_VERSION: '4.1.0' });
+    assert.equal(result.exitCode, 0, result.stderr + result.stdout);
+    const calls = harness.calls();
+    assert.match(calls, /attach --wsl --busid=2-5/);
+    assert.doesNotMatch(calls, /--auto-attach/);
   } finally {
     harness.cleanup();
   }
