@@ -87,6 +87,7 @@ function makeHarness(options: { nodeMajor: string; nodeVersion: string }): Harne
     TTLAB_NODE_PREFIX: prefix,
     TTLAB_FAKE_LOG: logPath,
     TTLAB_TEST_GROUPS: 'gongp adm dialout',
+    TTLAB_UDEV_RULES_FILE: join(root, 'no-ttlab-rules'),
     HOME: root,
   };
   return {
@@ -191,6 +192,19 @@ test('skips the dialout check when TTLAB_SKIP_DIALOUT=1 (Server-only run)', asyn
     const result = await harness.run({ TTLAB_TEST_GROUPS: 'gongp adm', TTLAB_SKIP_DIALOUT: '1' });
     assert.equal(result.exitCode, 0, result.stderr + result.stdout);
     assert.match(result.stdout, /skipping dialout group check/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('skips the dialout check when TTLAB udev rules are installed', async () => {
+  const harness = makeHarness({ nodeMajor: '22', nodeVersion: 'v22.14.0' });
+  try {
+    const rulesPath = join(harness.root, 'installed-rules');
+    writeFileSync(rulesPath, 'SUBSYSTEM=="tty", MODE="0666"\n');
+    const result = await harness.run({ TTLAB_TEST_GROUPS: 'gongp adm', TTLAB_UDEV_RULES_FILE: rulesPath });
+    assert.equal(result.exitCode, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /serial access via TTLAB udev rules/);
   } finally {
     harness.cleanup();
   }

@@ -28,6 +28,12 @@ ensure_dialout_membership() {
     log 'skipping dialout group check (TTLAB_SKIP_DIALOUT=1)'
     return 0
   fi
+  # The TTLAB udev rules grant serial access to ordinary users without the
+  # dialout group (see scripts/install-udev-rules.sh).
+  if [[ -f "${TTLAB_UDEV_RULES_FILE:-/etc/udev/rules.d/99-ttlab-serial.rules}" ]]; then
+    log 'serial access via TTLAB udev rules; dialout group not required'
+    return 0
+  fi
   getent group dialout >/dev/null 2>&1 || fail 'the dialout group is required for serial access; create it with: sudo groupadd dialout'
 
   if [[ "$(id -u)" -eq 0 ]]; then

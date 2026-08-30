@@ -7,7 +7,7 @@
 - Client 主机安装 `stty`，并存在 `dialout` 用户组。
 - 生产环境准备 Client 凭据和 Ed25519 更新公钥。
 
-两个脚本都会执行 `npm ci` 和 `npm run build`，并且必须以 root 运行。
+两个脚本都会执行 `npm ci` 和 `npm run build`，并且部署动作必须以 root 运行（写 `/etc/systemd`、创建用户、安装到 `/opt`）。部署完成后，Server 服务以独立低权用户 `ttlab-server` 运行，Client 以 `ttlab` 用户运行，均不要求服务进程保持 root。
 
 新机器可以先在 Linux/WSL 中初始化 Node.js 环境：
 
@@ -25,13 +25,23 @@ source ~/.bashrc
 
 脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组，纯 Server 部署可忽略（`start-server.sh` 已设置 `TTLAB_SKIP_DIALOUT=1` 自动跳过）。
 
+**替代方案（不加入 dialout 组）**：可以安装 TTLAB 自带 udev 规则，将 TTLAB 设备的串口权限放宽为所有用户可读写（0666），之后 Client 以普通用户运行即可访问串口，无需任何组。一次性安装（需要 root）：
+
+```bash
+sudo -E ./scripts/install-udev-rules.sh install   # 安装规则
+./scripts/install-udev-rules.sh status            # 查看规则状态与串口权限
+sudo -E ./scripts/install-udev-rules.sh remove    # 卸载，恢复 dialout 组方案
+```
+
+安装后 `init-environment.sh` 检测到规则存在会跳过 dialout 检查。该规则只匹配 TTLAB 已知设备（GD32 `28e9:018a`、CP2105 `10c4:ea70`），不影响其他外设。
+
 也可以直接使用一键 Server 启动脚本：
 
 ```bash
 ./scripts/start-server.sh
 ```
 
-该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建并启动 Server。普通用户启动时通过 `sudo` 提升权限；root 用户直接运行即可（自动使用系统级 Node，不再走 nvm/sudo）。Server 配置从仓库根目录的 `server.env` 读取。
+该脚本会初始化 Node.js 环境、使用 `npm ci` 重建 Linux 依赖、执行构建并启动 Server。默认监听 `9000` 端口（非特权端口），直接以当前用户运行，无需 sudo；仅当 `server.env` 配置了 <1024 的特权端口时才通过 `sudo` 提权。root 用户直接运行即可（自动使用系统级 Node，不再走 nvm/sudo）。Server 配置从仓库根目录的 `server.env` 读取。
 
 本地调试 Client 使用：
 
@@ -100,19 +110,19 @@ sudo ./scripts/deploy-server.sh
 - 构建 Server 和 Web。
 - 安装到 `/opt/ttlab/server/releases/<version>`。
 - 原子切换 `/opt/ttlab/server/current`。
-- 使用 `/opt/ttlab/server/current/server.env` 作为运行配置。
-- 创建并启动 `ttlab-server.service`。
+- 生成 `/etc/ttlab/server.env` 作为运行配置（`ttlab-server` 用户所有，供系统设置页面回写）。
+- 创建低权用户 `ttlab-server` 并启动 `ttlab-server.service`（服务以该用户运行）。
 - 新版本启动失败时恢复上一版本。
 
 检查：
 
 ```bash
 systemctl status ttlab-server
-curl http://127.0.0.1/healthz
+curl http://127.0.0.1:9000/healthz
 journalctl -u ttlab-server -f
 ```
 
-Server 默认以 root 用户运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/opt/ttlab/server/current/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
+Server 默认以低权用户 `ttlab-server` 运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/etc/ttlab/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用；启用后需确保 `ttlab-server` 用户能读取证书文件。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
 
 Server 额外配置项：
 
@@ -120,6 +130,44 @@ Server 额外配置项：
 |---|---|---|
 | `TTLAB_RELEASE_DIR` | `/srv/ttlab/releases` | Client 发布包与固件存储根目录；固件位于其 `firmware/<version>/` 子目录 |
 | `TTLAB_FIRMWARE_MAX_BYTES` | 1048576 (1 MiB) | 固件上传大小上限 |
+
+### 2.1 部署 dsh 引擎（可选）
+
+当 `TTLAB_AGENT_ENGINE=dsh` 时，需要额外部署 DeepSeek Harness 常驻服务：
+
+```bash
+# 安装 dsh（在 Server 宿主机，建议使用低权用户运行）
+npm install -g @deepseek-ai/dsh
+
+# 生成 systemd 服务，绑定 localhost，TTLAB Server 通过本地 API 驱动
+# 注意：dsh 配置文件需包含 DeepSeek API Key，并将 TTLAB MCP 加入其 MCP 列表：
+#   url: http://127.0.0.1:9000/mcp/v1
+#   headers: { authorization: "Bearer <TTLAB_AGENT_TOKEN>" }
+```
+
+`ttlab-agent.service`（示例）：
+
+```ini
+[Unit]
+Description=DeepSeek Harness (dsh) web service for TTLAB
+After=network.target ttlab-server.service
+
+[Service]
+User=ttlab-server
+ExecStart=/usr/bin/dsh web --port 9333
+Restart=on-failure
+RestartSec=3
+```
+
+然后在 `/etc/ttlab/server.env` 设置：
+
+```ini
+TTLAB_AGENT_ENGINE=dsh
+TTLAB_DSH_BASE_URL=http://127.0.0.1:9333
+TTLAB_DSH_WORKDIR=/srv/ttlab/agent-work
+```
+
+`TTLAB_DSH_WORKDIR` 目录需确保 `ttlab-server` 用户可写。dsh 接入的完整设计见 [agent-integration.md](agent-integration.md)。
 
 ## 3. 部署 Client
 
@@ -163,7 +211,7 @@ journalctl -u ttlab-client -f
 journalctl -u ttlab-updater -f
 ```
 
-当前部署默认关闭 Client Token 认证。Client 未配置 `TTLAB_CLIENT_ID` 时会自动生成并保存身份；如需启用认证，在 Server 和 Client 部署命令中同时加入 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的 `clientId=token`。首版本无数据库，Server 重启后 Client 会自动重连并重新上报快照。Server 以 root 运行会扩大进程被攻破后的权限范围，只建议用于受控网络。
+当前部署默认关闭 Client Token 认证。Client 未配置 `TTLAB_CLIENT_ID` 时会自动生成并保存身份；如需启用认证，在 Server 和 Client 部署命令中同时加入 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的 `clientId=token`。首版本无数据库，Server 重启后 Client 会自动重连并重新上报快照。Server 服务以低权用户 `ttlab-server` 运行，但仍只建议用于受控网络。
 
 ## 4. 重新部署和回滚
 

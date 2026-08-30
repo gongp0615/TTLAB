@@ -57,11 +57,21 @@ done
 NODE_MAJOR="$($NODE_BIN -p 'process.versions.node.split(".")[0]')"
 (( NODE_MAJOR >= 22 )) || fail "Node.js 22 or newer is required, found $($NODE_BIN --version)"
 
-getent group dialout >/dev/null 2>&1 || fail 'the dialout group is required for serial access'
+# Serial access: prefer the TTLAB udev rules (no group membership needed);
+# otherwise require the dialout group for the Client service user.
+UDEV_RULES_INSTALLED=0
+if [[ -f "${TTLAB_UDEV_RULES_FILE:-/etc/udev/rules.d/99-ttlab-serial.rules}" ]]; then
+  UDEV_RULES_INSTALLED=1
+  log 'serial access via TTLAB udev rules; dialout group not required'
+else
+  getent group dialout >/dev/null 2>&1 || fail 'the dialout group is required for serial access (or install TTLAB udev rules with scripts/install-udev-rules.sh)'
+fi
 if ! id ttlab >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/ttlab-client --create-home --shell /usr/sbin/nologin ttlab
 fi
-usermod -aG dialout ttlab
+if [[ "$UDEV_RULES_INSTALLED" -eq 0 ]]; then
+  usermod -aG dialout ttlab
+fi
 install -d -o ttlab -g ttlab -m 0750 /var/lib/ttlab-client
 install -d -m 0755 "$CLIENT_ROOT/releases" "$UPDATER_ROOT/releases" /etc/ttlab
 

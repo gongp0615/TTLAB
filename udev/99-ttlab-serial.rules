@@ -1,0 +1,6 @@
+# TTLAB serial devices - allow ordinary users to access them without the
+# dialout group. Matches only the device types registered in device-types/:
+#   GigaDevice GD32 CDC ACM            28e9:018a
+#   Silicon Labs CP2105 Dual UART      10c4:ea70
+SUBSYSTEM=="tty", ATTRS{idVendor}=="28e9", ATTRS{idProduct}=="018a", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", MODE="0666"

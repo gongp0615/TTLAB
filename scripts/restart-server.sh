@@ -12,16 +12,18 @@ log() { printf '[ttlab-restart] %s\n' "$*"; }
 SERVER_MODULE="$PROJECT_ROOT/dist/apps/server/src/index.js"
 GRACE_SECONDS="${TTLAB_RESTART_GRACE_SECONDS:-10}"
 
-# sudo is used when running as a normal user because the port binding and a
-# sudo-started Server need elevated privileges. Kill is attempted directly
-# first (works for a same-user Server); sudo is a fallback only.
+# A normal user can signal its own Server process directly; sudo is only a
+# fallback for a Server that was started via sudo on a privileged port.
 if [[ "$(id -u)" -eq 0 ]]; then
   IS_ROOT=1
   RUN=(env)
 else
   IS_ROOT=0
-  command -v sudo >/dev/null 2>&1 || fail 'sudo is required to stop and restart the Server'
-  RUN=(sudo env)
+  if command -v sudo >/dev/null 2>&1; then
+    RUN=(sudo env)
+  else
+    RUN=(env)
+  fi
 fi
 
 server_pids() {

@@ -126,9 +126,9 @@ TTLAB_PUBLIC_BASE_URL=http://Server的IP或域名
 3. 使用 Node.js 22。
 4. 使用 `npm ci` 安装当前平台依赖。
 5. 编译 TypeScript。
-6. 启动 Server（普通用户通过 `sudo`，root 用户直接运行）。
+6. 启动 Server。
 
-Server 前台运行，按 `Ctrl+C` 停止。默认监听 `9000` 端口；普通用户通过 `sudo` 获得监听权限，root 用户直接启动。
+Server 前台运行，按 `Ctrl+C` 停止。默认监听 `9000` 端口（非特权端口），直接以当前用户运行，无需 root；仅当 `server.env` 配置了 <1024 的特权端口（如 80）时才通过 `sudo` 提权。
 
 ### 4.3 systemd 部署
 
@@ -143,21 +143,24 @@ sudo ./scripts/deploy-server.sh
 ```text
 /opt/ttlab/server/releases/<version>
 /opt/ttlab/server/current
-/opt/ttlab/server/current/server.env
+/etc/ttlab/server.env
+/var/log/ttlab-server
 ```
 
-生成的 Server systemd 服务以 root 运行，并执行：
+生成的 Server systemd 服务以独立低权用户 `ttlab-server` 运行，并执行：
 
 ```text
 /opt/ttlab/server/current/dist/apps/server/src/index.js
 ```
+
+`ttlab-server` 用户由部署脚本幂等创建，用于运行服务、写固件目录（`TTLAB_RELEASE_DIR`）和回写 `/etc/ttlab/server.env`；部署动作本身（写 `/etc/systemd`、创建用户）仍需 root。
 
 检查：
 
 ```bash
 sudo systemctl status ttlab-server
 sudo journalctl -u ttlab-server -f
-curl http://127.0.0.1/healthz
+curl http://127.0.0.1:9000/healthz
 ```
 
 ## 5. Client 运行方式
@@ -178,7 +181,7 @@ source ~/.bashrc
 
 普通用户不要使用 `sudo` 运行该脚本；root 用户直接运行即可。
 
-脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组；`start-server.sh` 已设置 `TTLAB_SKIP_DIALOUT=1` 跳过此检查。
+脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组；`start-server.sh` 已设置 `TTLAB_SKIP_DIALOUT=1` 跳过此检查。**也可以改用 udev 规则**（`sudo -E ./scripts/install-udev-rules.sh install`），将 TTLAB 设备串口权限放宽为 0666，之后无需任何组即可访问串口。
 
 ### 5.2 调试启动
 
@@ -250,10 +253,18 @@ usbipd attach --wsl --busid <BUSID>
 ls -l /dev/ttyUSB* /dev/ttyACM* /dev/serial/by-id/
 ```
 
-Client 用户需要属于 `dialout` 组：
+Client 用户需要能够读写串口设备。两种方式二选一：
+
+方式一：加入 `dialout` 组：
 
 ```bash
 sudo usermod -aG dialout "$USER"
+```
+
+方式二（推荐，无需加入任何组）：安装 TTLAB udev 规则，将 TTLAB 设备串口权限放宽为 0666：
+
+```bash
+sudo -E ./scripts/install-udev-rules.sh install
 ```
 
 重新打开 WSL 后再运行 Client。设备透传到 WSL 后，Windows 原来的 COM 端口暂时不可用是正常现象。
@@ -606,7 +617,7 @@ sudo ss -ltnp | grep ':9000'
 curl http://127.0.0.1:9000/healthz
 ```
 
-通常原因是 9000 端口已被占用或 Server 没有使用 root 启动。
+通常原因是 9000 端口已被占用或当前用户没有监听该端口的权限（配置了特权端口时需 sudo 启动）。
 
 ### Client 显示 0 个串口
 
@@ -645,9 +656,8 @@ TTLAB_TVBOX_CONTROL_PORT='serial:usb-...GD32...if00' ./scripts/start-client.sh
 当前简化配置：
 
 ```text
-Server HTTP/WS
+Server HTTP/WS（低权用户 ttlab-server 运行）
 Client Token 认证关闭
-Server root 运行
 ```
 
 只适合本机、实验室或受控内网调试。正式生产环境至少应恢复 Client 认证、启用 HTTPS/WSS、增加 Web 用户认证和 RBAC，并对重启、DFU、EDID 等操作进行二次确认和审计。

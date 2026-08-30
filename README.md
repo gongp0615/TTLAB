@@ -183,7 +183,7 @@ npm run build
 
 `init-environment.sh` 按用户身份选择 Node 安装方式：普通用户使用 nvm（安装到 `~/.nvm`）；root 用户自动安装系统级 Node.js 22 到 `/usr/local`（适用于云服务器等 root 登录环境）。root 下执行后无需 `source ~/.bashrc`。
 
-脚本同时检查串口访问所需的 `dialout` 组成员资格：普通用户不在该组时会报错并提示修复命令（`sudo usermod -aG dialout $USER` 后重新登录）；root 用户会自动确保 systemd Client 用户 `ttlab` 已加入 `dialout`。只有运行 Client 访问串口才需要该组；`start-server.sh` 会设置 `TTLAB_SKIP_DIALOUT=1` 跳过此检查。
+脚本同时检查串口访问所需的 `dialout` 组成员资格：普通用户不在该组时会报错并提示修复命令（`sudo usermod -aG dialout $USER` 后重新登录）；root 用户会自动确保 systemd Client 用户 `ttlab` 已加入 `dialout`。只有运行 Client 访问串口才需要该组；`start-server.sh` 会设置 `TTLAB_SKIP_DIALOUT=1` 跳过此检查。**也可以不加入任何组**：执行 `sudo -E ./scripts/install-udev-rules.sh install` 安装 TTLAB udev 规则（仅放宽 TTLAB 设备串口权限为 0666），之后 Client 全程以普通用户运行。
 
 仓库根目录自带默认配置 `server.env`（clone 后可直接使用）。如需调整端口、公网地址或密钥，直接编辑该文件。为避免本机配置被 git 跟踪，建议执行一次：
 
@@ -203,7 +203,7 @@ git update-index --skip-worktree server.env
 ./scripts/start-client.sh
 ```
 
-Server 默认使用 HTTP/WS 并监听 `9000`，不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。
+Server 默认使用 HTTP/WS 并监听 `9000`（非特权端口，直接以当前用户运行，无需 root；仅配置 <1024 端口时需 sudo），不需要证书或私钥。TLS/WSS 仍可通过 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 和 `TTLAB_TLS_REQUIRED=1` 可选启用。当前默认关闭 Client 认证只适用于受控网络联调；恢复认证时，Server 和 Client 同时设置 `TTLAB_CLIENT_AUTH_ENABLED=1`，并配置匹配的独立凭据。生产部署的 Server systemd 服务以低权用户 `ttlab-server` 运行。
 
 ### 一键部署
 

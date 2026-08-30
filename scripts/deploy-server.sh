@@ -30,7 +30,8 @@ done < "$CONFIG_FILE"
 INSTALL_ROOT="${TTLAB_SERVER_INSTALL_ROOT:-/opt/ttlab/server}"
 VERSION="${TTLAB_VERSION:-$(date -u +%Y%m%d%H%M%S)}"
 SERVICE_NAME="${TTLAB_SERVER_SERVICE_NAME:-ttlab-server}"
-ENV_FILE="${TTLAB_SERVER_ENV_FILE:-$INSTALL_ROOT/current/server.env}"
+SERVER_USER="${TTLAB_SERVER_USER:-ttlab-server}"
+ENV_FILE="${TTLAB_SERVER_ENV_FILE:-/etc/ttlab/server.env}"
 PORT="${TTLAB_SERVER_PORT:-9000}"
 TLS_KEY_FILE="${TTLAB_TLS_KEY_FILE:-}"
 TLS_CERT_FILE="${TTLAB_TLS_CERT_FILE:-}"
@@ -67,8 +68,14 @@ fi
 NODE_MAJOR="$($NODE_BIN -p 'process.versions.node.split(".")[0]')"
 (( NODE_MAJOR >= 22 )) || fail "Node.js 22 or newer is required, found $($NODE_BIN --version)"
 
-install -d -m 0755 "$INSTALL_ROOT/releases" "$RELEASE_DIRECTORY"
-log 'installing dependencies and building the release'
+# The Server service runs unprivileged on the configured (non-privileged) port.
+# Deploy-time operations (writing /etc/systemd, creating the user) still need root.
+if ! id "$SERVER_USER" >/dev/null 2>&1; then
+  useradd --system --home-dir "/var/lib/$SERVER_USER" --create-home --shell /usr/sbin/nologin "$SERVER_USER"
+fi
+install -d -m 0755 "$INSTALL_ROOT/releases"
+install -d -m 0750 -o "$SERVER_USER" -g "$SERVER_USER" "$RELEASE_DIRECTORY"
+log "installing dependencies and building the release"
 cd "$SOURCE_ROOT"
 "$NPM_BIN" ci
 "$NPM_BIN" run build
@@ -98,6 +105,8 @@ printf '%s\n' \
   "TTLAB_SERVER_PORT=$PORT" \
   "TTLAB_WEB_ROOT=$INSTALL_ROOT/current" \
   "TTLAB_RELEASE_DIR=$RELEASE_DIRECTORY" \
+  "TTLAB_CONFIG_FILE=$ENV_FILE" \
+  "TTLAB_LOG_DIR=/var/log/$SERVER_USER" \
   "TTLAB_PUBLIC_BASE_URL=$PUBLIC_BASE_URL" \
   "TTLAB_TLS_KEY_FILE=$TLS_KEY_FILE" \
   "TTLAB_TLS_CERT_FILE=$TLS_CERT_FILE" \
@@ -111,7 +120,8 @@ printf '%s\n' \
   "TTLAB_AGENT_LLM_URL=${TTLAB_AGENT_LLM_URL:-https://api.deepseek.com}" \
   "TTLAB_AGENT_MAX_SESSIONS=${TTLAB_AGENT_MAX_SESSIONS:-8}" \
   "TTLAB_AGENT_APPROVAL_TIMEOUT_MS=${TTLAB_AGENT_APPROVAL_TIMEOUT_MS:-60000}" > "$ENV_TMP"
-install -o root -g root -m 0600 "$ENV_TMP" "$ENV_FILE"
+install -d -m 0755 "$(dirname "$ENV_FILE")"
+install -o "$SERVER_USER" -g "$SERVER_USER" -m 0600 "$ENV_TMP" "$ENV_FILE"
 rm -f -- "$ENV_TMP"
 
 SERVICE_TMP="$(mktemp /etc/systemd/system/${SERVICE_NAME}.service.XXXXXX)"
@@ -123,11 +133,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$INSTALL_ROOT/current
 EnvironmentFile=$ENV_FILE
 ExecStart=$NODE_BIN $INSTALL_ROOT/current/dist/apps/server/src/index.js
-Group=root
-User=root
+Group=$SERVER_USER
+User=$SERVER_USER
+StateDirectory=$SERVER_USER
+LogsDirectory=$SERVER_USER
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
