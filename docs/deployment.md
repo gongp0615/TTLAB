@@ -23,6 +23,8 @@ source ~/.bashrc
 
 普通用户不要使用 `sudo` 运行该初始化脚本（nvm 是 per-user 工具）；root 用户直接运行即可。普通用户如需强制走系统级安装，可设置 `TTLAB_SYSTEM_NODE=1`（配合 `sudo` 使用）。
 
+脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组，纯 Server 部署可忽略。
+
 也可以直接使用一键 Server 启动脚本：
 
 ```bash
@@ -112,6 +114,13 @@ journalctl -u ttlab-server -f
 
 Server 默认以 root 用户运行在 `9000` 端口，使用 HTTP/WS，不要求证书和私钥。运行配置统一保存在 `/opt/ttlab/server/current/server.env`，systemd 通过 `EnvironmentFile` 加载。TLS/WSS 作为可选配置，只有同时提供 `TTLAB_TLS_KEY_FILE`、`TTLAB_TLS_CERT_FILE` 并设置 `TTLAB_TLS_REQUIRED=1` 时启用。Client 的 `TTLAB_SERVER_URL` 使用 `ws://`；启用 TLS 后改为 `wss://`。
 
+Server 额外配置项：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TTLAB_RELEASE_DIR` | `/srv/ttlab/releases` | Client 发布包与固件存储根目录；固件位于其 `firmware/<version>/` 子目录 |
+| `TTLAB_FIRMWARE_MAX_BYTES` | 1048576 (1 MiB) | 固件上传大小上限 |
+
 ## 3. 部署 Client
 
 先把更新公钥放到 Client 主机，例如：
@@ -130,6 +139,13 @@ sudo -E env \
   TTLAB_UPDATE_PUBLIC_KEY_FILE='/etc/ttlab/update-public.pem' \
   ./scripts/deploy-client.sh
 ```
+
+Client 的 `deploy-client.sh` 会自动安装 `dfu-util`（固件刷写依赖），并将 DFU 设备 VID/PID 写入 `/etc/ttlab/client.env`：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TTLAB_DFU_VID` | `28e9` | 设备进入 DFU 模式后的 USB vendor id |
+| `TTLAB_DFU_PID` | `018a` | 设备进入 DFU 模式后的 USB product id（实测后可能需调整） |
 
 脚本会：
 

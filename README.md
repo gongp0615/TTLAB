@@ -125,6 +125,7 @@ Server 支持 Client 身份认证和用户权限控制。当前为简化联调�
 - 实时展示 Client 和设备在线状态。
 - 支持远程下发串口操作指令。
 - 支持执行超时、失败重试和异常反馈。
+- 支持 TV Stick Test Box 固件刷写（Web 上传固件 → Server 调度 → Client 通过 dfu-util 刷写，全程进度与审计）。
 - 支持设备、Client 和操作记录查询。
 - 支持后续扩展设备分组、用户权限和批量操作。
 
@@ -181,6 +182,8 @@ npm run build
 ```
 
 `init-environment.sh` 按用户身份选择 Node 安装方式：普通用户使用 nvm（安装到 `~/.nvm`）；root 用户自动安装系统级 Node.js 22 到 `/usr/local`（适用于云服务器等 root 登录环境）。root 下执行后无需 `source ~/.bashrc`。
+
+脚本同时检查串口访问所需的 `dialout` 组成员资格：普通用户不在该组时会报错并提示修复命令（`sudo usermod -aG dialout $USER` 后重新登录）；root 用户会自动确保 systemd Client 用户 `ttlab` 已加入 `dialout`。
 
 仓库根目录自带默认配置 `server.env`（clone 后可直接使用）。如需调整端口、公网地址或密钥，直接编辑该文件。为避免本机配置被 git 跟踪，建议执行一次：
 

@@ -18,6 +18,37 @@ if ! command -v curl >/dev/null 2>&1; then
   fail 'curl is required; install it with: sudo apt-get update && sudo apt-get install -y curl ca-certificates'
 fi
 
+# Serial devices on Linux are owned by root:dialout. The current user must be
+# a member of dialout for the Client to open /dev/ttyUSB* and /dev/ttyACM*.
+# Group membership only takes effect after a new login, so a missing dialout
+# here cannot be fixed by this script alone (it would need sudo + re-login).
+ensure_dialout_membership() {
+  getent group dialout >/dev/null 2>&1 || fail 'the dialout group is required for serial access; create it with: sudo groupadd dialout'
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    # Root can access serial devices directly. When the systemd Client user
+    # exists (deployment), make sure it can too.
+    if id ttlab >/dev/null 2>&1; then
+      if id -nG ttlab | grep -qw dialout; then
+        log 'ttlab user already in dialout group'
+      else
+        log 'adding ttlab user to the dialout group'
+        usermod -aG dialout ttlab
+      fi
+    fi
+    return 0
+  fi
+
+  local effective_groups
+  effective_groups="${TTLAB_TEST_GROUPS:-$(id -nG)}"
+  if [[ "$effective_groups" != *"dialout"* ]]; then
+    fail "the current user is not in the dialout group, which is required for serial access. Run: sudo usermod -aG dialout $USER  then log out and back in (or run: newgrp dialout)"
+  fi
+  log 'current user is in the dialout group'
+}
+
+ensure_dialout_membership
+
 # Resolve the requested Node.js version: a bare major number (default "22")
 # resolves to the latest matching release; an explicit x.y.z is used verbatim.
 resolve_node_version() {

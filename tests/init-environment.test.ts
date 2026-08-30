@@ -86,6 +86,7 @@ function makeHarness(options: { nodeMajor: string; nodeVersion: string }): Harne
     TTLAB_SYSTEM_NODE: '1',
     TTLAB_NODE_PREFIX: prefix,
     TTLAB_FAKE_LOG: logPath,
+    TTLAB_TEST_GROUPS: 'gongp adm dialout',
     HOME: root,
   };
   return {
@@ -156,6 +157,29 @@ test('root mode fails on an unsupported architecture', async () => {
     const result = await harness.run({ TTLAB_NODE_ARCH: 'riscv64' });
     assert.notEqual(result.exitCode, 0);
     assert.match(result.stderr + result.stdout, /unsupported Node\.js architecture: riscv64/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('fails when the current user is not a member of the dialout group', async () => {
+  const harness = makeHarness({ nodeMajor: '22', nodeVersion: 'v22.14.0' });
+  try {
+    const result = await harness.run({ TTLAB_TEST_GROUPS: 'gongp adm' });
+    assert.notEqual(result.exitCode, 0);
+    assert.match(result.stderr + result.stdout, /not in the dialout group/);
+    assert.match(result.stderr + result.stdout, /sudo usermod -aG dialout/);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('proceeds when the current user is a member of the dialout group', async () => {
+  const harness = makeHarness({ nodeMajor: '22', nodeVersion: 'v22.14.0' });
+  try {
+    const result = await harness.run({ TTLAB_TEST_GROUPS: 'gongp adm dialout' });
+    assert.equal(result.exitCode, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /current user is in the dialout group/);
   } finally {
     harness.cleanup();
   }

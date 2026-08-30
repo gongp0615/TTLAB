@@ -178,6 +178,8 @@ source ~/.bashrc
 
 普通用户不要使用 `sudo` 运行该脚本；root 用户直接运行即可。
 
+脚本还会检查串口访问所需的 `dialout` 组：普通用户不在该组时脚本报错并给出修复命令（`sudo usermod -aG dialout $USER` 后重新登录，或 `newgrp dialout` 立即生效）；root 用户会自动把 systemd Client 用户 `ttlab` 加入 `dialout`。只有运行 Client 访问串口才需要该组。
+
 ### 5.2 调试启动
 
 启动 Server 后，在另一个终端执行：
@@ -368,10 +370,11 @@ apps/client/src/serial.ts
 | `hardware.lcd` | `AT+SYSCMD=LCDOFF/LCDLOGO` | 设置 LCD |
 | `system.reset` | `AT+SYSRST=REBOOT/DFU` | 系统重启或 DFU |
 | `device.reboot` | `AT+REBOOT=NRM/DWN` | DUT 重启模式 |
+| `firmware.flash` | 固件版本 + 文件（DFU 刷写） | 通过 dfu-util 刷写 GD32 固件 |
 
 Server 只接受操作白名单，不接受任意 Shell 或任意原始 AT 命令。
 
-DFU、重启、EDID 写入以及设备配置修改属于高风险操作，当前不应在无权限控制的公网环境开放。
+DFU、重启、固件刷写、EDID 写入以及设备配置修改属于高风险操作，当前不应在无权限控制的公网环境开放。
 
 ## 9. 日志链路
 
@@ -553,7 +556,7 @@ version\nplatform\narchitecture\nsha256
 npm test
 ```
 
-当前测试覆盖 81 项：
+当前测试覆盖 107 项：
 
 - 协议 Envelope 和字段校验。
 - 日志分片大小和字段校验。
@@ -573,6 +576,10 @@ npm test
 - Agent 网关全链路（对话→工具→审批→执行→回复→审计）与功能开关。
 - 设置存储（配置文件读写、掩码、校验、损坏文件回退）与设置 API 运行时生效。
 - Updater 架构、协议版本、签名、Hash、自检和回滚。
+- 固件上传/列表/下载端点与 manifest 校验。
+- `firmware.flash` 下发（下载引用、过期时间）与 `command.progress` 阶段回传。
+- `UsbDfuFlasher` 全流程（mock dfu-util）：SHA-256 校验、DFU 等待、刷写失败重试、回读校验、设备卡 DFU。
+- Client 注入 `FakeFirmwareFlasher` 的固件刷写全链路与缺下载引用拒绝。
 
 额外检查：
 
