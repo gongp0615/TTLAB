@@ -54,6 +54,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const clients = runtime.clients.filter((client) => clientFilter === 'all' || client.status === clientFilter);
     const onlineClients = runtime.clients.filter((client) => client.status === 'online').length;
     const devices = runtime.devices;
+    // 设备不再可操作时（如离线），自动退订并清理日志状态，避免日志持续推送但界面不可见
+    for (const device of devices) {
+      const canOperate = device.deviceType === 'tv-stick-test-box' && (device.status === 'identified' || lastResults[device.deviceId]?.kind === 'pending');
+      const state = logState.get(device.deviceId);
+      if (state?.enabled && !canOperate) {
+        logState.set(device.deviceId, { enabled: false, buffer: '', subscribed: false });
+        sendLogSubscription(device.deviceId, 'log.unsubscribe');
+      }
+    }
     document.querySelector('#clientMetric').textContent = String(onlineClients).padStart(2, '0');
     document.querySelector('#clientMetricFoot').textContent = `${runtime.clients.length} 个 Client 已连接或登记`;
     document.querySelector('#deviceMetric').textContent = String(devices.length).padStart(2, '0');
@@ -324,8 +333,10 @@ document.addEventListener('DOMContentLoaded', () => {
     render();
     try {
       const history = await loadRecentLogs(deviceId);
+      // 回填期间用户可能已关闭开关，此时不再填充与订阅
+      if (!logState.get(deviceId)?.enabled) return;
       const state = logState.get(deviceId);
-      if (state?.enabled) {
+      if (state) {
         state.buffer = history.slice(-MAX_LOG_BUFFER);
         const box = document.querySelector(`[data-log-box="${CSS.escape(deviceId)}"]`);
         if (box) {
@@ -336,6 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch {
       // 历史回填失败不阻塞实时订阅
     }
+    if (!logState.get(deviceId)?.enabled) return;
     sendLogSubscription(deviceId, 'log.subscribe');
     const latest = logState.get(deviceId);
     if (latest) latest.subscribed = true;

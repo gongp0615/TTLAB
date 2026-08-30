@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const repoRoot = join(import.meta.dirname, '..', '..');
 const indexHtml = readFileSync(join(repoRoot, 'index.html'), 'utf8');
 const stylesCss = readFileSync(join(repoRoot, 'styles.css'), 'utf8');
+const appJs = readFileSync(join(repoRoot, 'app.js'), 'utf8');
 
 test('agent panel is docked inside the center workspace, not the left sidebar', () => {
   const mainStart = indexHtml.indexOf('<main class="main-content">');
@@ -71,5 +72,24 @@ test('dashboard content-wrap fills the workspace when the agent panel is closed'
   // Mobile breakpoint must keep the explicit width so the fix survives responsive collapse
   const mobileRule = stylesCss.match(/@media\s*\(max-width:\s*1280px\)\s*\{\s*\.content-wrap\s*\{[^}]*\}\s*\}/);
   assert.ok(mobileRule === null || !/width\s*:/.test(mobileRule[0]), 'mobile override must not strip the content-wrap width');
+});
+
+test('per-device serial log toggle lives at the end of the device action row and defaults to off', () => {
+  assert.ok(appJs.includes('device-log-toggle'), 'device card must render a serial log toggle');
+  assert.ok(appJs.includes('data-log-toggle'), 'toggle must carry the device id');
+  assert.ok(appJs.includes('device-log-box'), 'toggle must reveal a per-device log box');
+  assert.match(appJs, /logEnabled\s*=\s*Boolean\(logState\.get\(device\.deviceId\)\?\.enabled\)/, 'toggle must be driven by logState and default to off');
+});
+
+test('unoperable devices are unsubscribed and their log state is cleaned up', () => {
+  // 设备不再可操作（如离线）时自动退订，避免日志持续推送但界面不可见
+  assert.match(appJs, /logState\.set\(device\.deviceId,\s*\{\s*enabled:\s*false,\s*buffer:\s*'',\s*subscribed:\s*false\s*\}\)/, 'log state must be reset when the device is no longer operable');
+  assert.match(appJs, /sendLogSubscription\(device\.deviceId,\s*'log\.unsubscribe'\)/, 'unoperable device must send log.unsubscribe');
+});
+
+test('history backfill skips when the toggle is switched off during load', () => {
+  // 回填期间用户关闭开关时不再填充日志，也不再订阅
+  assert.ok(appJs.includes("if (!logState.get(deviceId)?.enabled) return;"), 'backfill must abort when the toggle was switched off');
+  assert.ok(appJs.includes("if (!logState.get(deviceId)?.enabled) return;\n    sendLogSubscription(deviceId, 'log.subscribe');"), 'subscribe must be skipped after backfill aborts');
 });
 
