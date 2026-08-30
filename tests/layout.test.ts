@@ -45,3 +45,15 @@ test('agent launcher is positioned at the workspace left edge on desktop and mob
   const mobileLine = lines.find((line) => line.includes('@media (max-width: 900px)') && line.includes('left: 80px'));
   assert.ok(mobileLine !== undefined, 'launcher should sit 80px from the left on the collapsed 64px sidebar');
 });
+
+test('dashboard content-wrap fills the workspace when the agent panel is closed', () => {
+  const rule = stylesCss.match(/\.content-wrap\s*\{[^}]*\}/);
+  assert.ok(rule !== null, '.content-wrap rule must exist');
+  const body = rule[0];
+  assert.match(body, /width:\s*100%/, 'content-wrap must declare an explicit width so it fills the flex container');
+  assert.match(body, /max-width:\s*1535px/, 'content-wrap must cap at 1535px so wide screens stay readable');
+  assert.match(body, /margin:\s*0\s+auto/, 'content-wrap must center itself with auto horizontal margins');
+  // Mobile breakpoint must keep the explicit width so the fix survives responsive collapse
+  const mobileRule = stylesCss.match(/@media\s*\(max-width:\s*1280px\)\s*\{\s*\.content-wrap\s*\{[^}]*\}\s*\}/);
+  assert.ok(mobileRule === null || !/width\s*:/.test(mobileRule[0]), 'mobile override must not strip the content-wrap width');
+});
